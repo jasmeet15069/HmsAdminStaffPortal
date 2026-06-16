@@ -1,17 +1,30 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PageHeader } from "@/components/AppShell";
 import { useMHMS, resStatusMeta, fmtINR, type ResStatus } from "@/lib/mhms-store";
+import { useAuth } from "@/lib/api/auth";
+import { useReservations, useCheckIn, useCheckOut } from "@/lib/api/hooks";
+import type { Reservation as ApiReservation } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, Eye, X, LogIn, LogOut } from "lucide-react";
+import { Plus, Search, Eye, LogIn, LogOut, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 
@@ -20,32 +33,166 @@ export const Route = createFileRoute("/reservations")({
   component: ReservationsPage,
 });
 
+// A view-model row that both the live API and the demo store normalize into, so
+// the table/dialog render from a single shape regardless of data source.
+interface Row {
+  id: string;
+  code: string;
+  guestName: string;
+  guestEmail?: string;
+  guestPhone?: string;
+  roomLabel: string;
+  checkIn: string;
+  checkOut: string;
+  nights: number;
+  amount: number;
+  // Unified status bucket used for tabs/filtering.
+  bucket: "upcoming" | "in_house" | "checked_out" | "cancelled";
+  statusLabel: string;
+  statusColor: string;
+  canCheckIn: boolean;
+  canCheckOut: boolean;
+}
+
+// Live API status -> unified bucket + presentation.
+const liveStatusMeta: Record<
+  ApiReservation["status"],
+  { bucket: Row["bucket"]; label: string; color: string }
+> = {
+  upcoming: { bucket: "upcoming", label: "Upcoming", color: "bg-info/15 text-info border-info/30" },
+  pending_checkin: {
+    bucket: "upcoming",
+    label: "Due In",
+    color: "bg-warning/20 text-warning-foreground border-warning/40",
+  },
+  in_house: {
+    bucket: "in_house",
+    label: "In-House",
+    color: "bg-success/15 text-success border-success/30",
+  },
+  checked_out: {
+    bucket: "checked_out",
+    label: "Departed",
+    color: "bg-muted text-muted-foreground border-border",
+  },
+};
+
+// Demo store status -> unified bucket.
+const demoBucket: Record<ResStatus, Row["bucket"]> = {
+  confirmed: "upcoming",
+  pending: "upcoming",
+  checked_in: "in_house",
+  checked_out: "checked_out",
+  cancelled: "cancelled",
+  no_show: "cancelled",
+};
+
 function ReservationsPage() {
+  const authed = !!useAuth((s) => s.user);
+  const live = useReservations();
+  const isLive = authed && !!live.data;
+
   const { reservations, guests, rooms, cancelReservation, checkIn, checkOut } = useMHMS();
+  const checkInM = useCheckIn();
+  const checkOutM = useCheckOut();
+
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<string>("all");
+  const [tab, setTab] = useState<string>("all");
   const [open, setOpen] = useState<string | null>(null);
 
-  const filtered = useMemo(() => {
-    return reservations.filter((r) => {
+  const rows: Row[] = useMemo(() => {
+    if (isLive) {
+      return (live.data ?? []).map((r) => {
+        const meta = liveStatusMeta[r.status] ?? liveStatusMeta.upcoming;
+        return {
+          id: r.id,
+          code: r.id.slice(0, 8).toUpperCase(),
+          guestName: r.guest_name,
+          guestEmail: r.guest_email ?? undefined,
+          guestPhone: r.guest_phone ?? undefined,
+          roomLabel: r.room_number
+            ? `${r.room_number}${r.room_type ? ` · ${r.room_type}` : ""}`
+            : "—",
+          checkIn: r.check_in_date.slice(0, 10),
+          checkOut: r.check_out_date.slice(0, 10),
+          nights: r.nights,
+          amount: r.total_amount ?? 0,
+          bucket: meta.bucket,
+          statusLabel: meta.label,
+          statusColor: meta.color,
+          canCheckIn: r.status === "upcoming" || r.status === "pending_checkin",
+          canCheckOut: r.status === "in_house",
+        };
+      });
+    }
+    return reservations.map((r) => {
       const g = guests.find((x) => x.id === r.guestId);
-      const matchQ = !q || g?.name.toLowerCase().includes(q.toLowerCase()) || r.code.toLowerCase().includes(q.toLowerCase());
-      const matchS = status === "all" || r.status === status;
-      return matchQ && matchS;
+      const room = rooms.find((x) => x.id === r.roomId);
+      const meta = resStatusMeta[r.status];
+      const nights = Math.round(
+        (new Date(r.checkOut).getTime() - new Date(r.checkIn).getTime()) / 86400000,
+      );
+      return {
+        id: r.id,
+        code: r.code,
+        guestName: g?.name ?? "—",
+        guestEmail: g?.email,
+        guestPhone: g?.phone,
+        roomLabel: room ? `${room.number} · ${room.type}` : "—",
+        checkIn: r.checkIn,
+        checkOut: r.checkOut,
+        nights,
+        amount: r.rate,
+        bucket: demoBucket[r.status],
+        statusLabel: meta.label,
+        statusColor: meta.color,
+        canCheckIn: r.status === "confirmed",
+        canCheckOut: r.status === "checked_in",
+      };
     });
-  }, [reservations, guests, q, status]);
+  }, [isLive, live.data, reservations, guests, rooms]);
 
-  const counts = {
-    all: reservations.length,
-    confirmed: reservations.filter(r => r.status === "confirmed").length,
-    checked_in: reservations.filter(r => r.status === "checked_in").length,
-    checked_out: reservations.filter(r => r.status === "checked_out").length,
-    cancelled: reservations.filter(r => r.status === "cancelled").length,
+  const filtered = useMemo(
+    () =>
+      rows.filter((r) => {
+        const matchQ =
+          !q ||
+          r.guestName.toLowerCase().includes(q.toLowerCase()) ||
+          r.code.toLowerCase().includes(q.toLowerCase());
+        const matchTab = tab === "all" || r.bucket === tab;
+        return matchQ && matchTab;
+      }),
+    [rows, q, tab],
+  );
+
+  const counts = useMemo(
+    () => ({
+      all: rows.length,
+      upcoming: rows.filter((r) => r.bucket === "upcoming").length,
+      in_house: rows.filter((r) => r.bucket === "in_house").length,
+      checked_out: rows.filter((r) => r.bucket === "checked_out").length,
+    }),
+    [rows],
+  );
+
+  const sel = open ? rows.find((r) => r.id === open) : null;
+
+  const doCheckIn = (id: string) => {
+    if (isLive) checkInM.mutate(id, { onSuccess: () => toast.success("Guest checked in") });
+    else {
+      checkIn(id);
+      toast.success("Guest checked in");
+    }
+    setOpen(null);
   };
-
-  const sel = open ? reservations.find(r => r.id === open) : null;
-  const selGuest = sel ? guests.find(g => g.id === sel.guestId) : null;
-  const selRoom = sel ? rooms.find(r => r.id === sel.roomId) : null;
+  const doCheckOut = (id: string) => {
+    if (isLive) checkOutM.mutate(id, { onSuccess: () => toast.success("Guest checked out") });
+    else {
+      checkOut(id);
+      toast.success("Guest checked out");
+    }
+    setOpen(null);
+  };
 
   return (
     <>
@@ -53,35 +200,61 @@ function ReservationsPage() {
         title="Reservations"
         description="Manage bookings, modifications, group blocks and cancellations."
         actions={
-          <Button asChild><Link to="/reservations/new"><Plus className="size-4" /> New reservation</Link></Button>
+          <div className="flex items-center gap-2">
+            <Badge variant={isLive ? "default" : "outline"} className="self-center">
+              {isLive ? "Live data" : "Demo data"}
+            </Badge>
+            <Button asChild>
+              <Link to="/reservations/new">
+                <Plus className="size-4" /> New reservation
+              </Link>
+            </Button>
+          </div>
         }
       />
 
-      <Tabs value={status} onValueChange={setStatus}>
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          <TabsTrigger value="all">All <Badge variant="secondary" className="ml-2">{counts.all}</Badge></TabsTrigger>
-          <TabsTrigger value="confirmed">Confirmed <Badge variant="secondary" className="ml-2">{counts.confirmed}</Badge></TabsTrigger>
-          <TabsTrigger value="checked_in">In-house <Badge variant="secondary" className="ml-2">{counts.checked_in}</Badge></TabsTrigger>
-          <TabsTrigger value="checked_out">Departed <Badge variant="secondary" className="ml-2">{counts.checked_out}</Badge></TabsTrigger>
-          <TabsTrigger value="cancelled">Cancelled <Badge variant="secondary" className="ml-2">{counts.cancelled}</Badge></TabsTrigger>
+          <TabsTrigger value="all">
+            All{" "}
+            <Badge variant="secondary" className="ml-2">
+              {counts.all}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="upcoming">
+            Upcoming{" "}
+            <Badge variant="secondary" className="ml-2">
+              {counts.upcoming}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="in_house">
+            In-house{" "}
+            <Badge variant="secondary" className="ml-2">
+              {counts.in_house}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="checked_out">
+            Departed{" "}
+            <Badge variant="secondary" className="ml-2">
+              {counts.checked_out}
+            </Badge>
+          </TabsTrigger>
         </TabsList>
-        <TabsContent value={status} className="mt-4">
+        <TabsContent value={tab} className="mt-4">
           <Card className="p-4">
             <div className="flex items-center gap-3 mb-4">
               <div className="relative flex-1 max-w-sm">
                 <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input placeholder="Search by guest or code…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
+                <Input
+                  placeholder="Search by guest or code…"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  className="pl-9"
+                />
               </div>
-              <Select defaultValue="all">
-                <SelectTrigger className="w-40"><SelectValue placeholder="Source" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All sources</SelectItem>
-                  <SelectItem value="Direct">Direct</SelectItem>
-                  <SelectItem value="Booking.com">Booking.com</SelectItem>
-                  <SelectItem value="Expedia">Expedia</SelectItem>
-                  <SelectItem value="Walk-in">Walk-in</SelectItem>
-                </SelectContent>
-              </Select>
+              {isLive && live.isFetching && (
+                <Loader2 className="size-4 animate-spin text-muted-foreground" />
+              )}
             </div>
             <Table>
               <TableHeader>
@@ -91,39 +264,42 @@ function ReservationsPage() {
                   <TableHead>Room</TableHead>
                   <TableHead>Check-in</TableHead>
                   <TableHead>Check-out</TableHead>
-                  <TableHead>Source</TableHead>
+                  <TableHead>Nights</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((r) => {
-                  const g = guests.find((x) => x.id === r.guestId);
-                  const room = rooms.find((x) => x.id === r.roomId);
-                  return (
-                    <TableRow key={r.id}>
-                      <TableCell className="font-mono text-xs">{r.code}</TableCell>
-                      <TableCell className="font-medium">{g?.name}</TableCell>
-                      <TableCell>{room?.number} · {room?.type}</TableCell>
-                      <TableCell>{r.checkIn}</TableCell>
-                      <TableCell>{r.checkOut}</TableCell>
-                      <TableCell><Badge variant="outline">{r.source}</Badge></TableCell>
-                      <TableCell>
-                        <span className={`text-xs px-2 py-0.5 rounded border ${resStatusMeta[r.status as ResStatus].color}`}>
-                          {resStatusMeta[r.status as ResStatus].label}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right font-medium">{fmtINR(r.rate)}</TableCell>
-                      <TableCell className="space-x-1">
-                        <Button variant="ghost" size="sm" onClick={() => setOpen(r.id)}><Eye className="size-4" /></Button>
-                        <Button variant="outline" size="sm" asChild><Link to="/reservations/$id" params={{ id: r.id }}>Open</Link></Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {filtered.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="font-mono text-xs">{r.code}</TableCell>
+                    <TableCell className="font-medium">{r.guestName}</TableCell>
+                    <TableCell>{r.roomLabel}</TableCell>
+                    <TableCell>{r.checkIn}</TableCell>
+                    <TableCell>{r.checkOut}</TableCell>
+                    <TableCell>{r.nights}</TableCell>
+                    <TableCell>
+                      <span className={`text-xs px-2 py-0.5 rounded border ${r.statusColor}`}>
+                        {r.statusLabel}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right font-medium">
+                      {r.amount ? fmtINR(r.amount) : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" onClick={() => setOpen(r.id)}>
+                        <Eye className="size-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
                 {filtered.length === 0 && (
-                  <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No reservations match your filters</TableCell></TableRow>
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                      No reservations match your filters
+                    </TableCell>
+                  </TableRow>
                 )}
               </TableBody>
             </Table>
@@ -133,43 +309,62 @@ function ReservationsPage() {
 
       <Dialog open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
         <DialogContent className="max-w-2xl">
-          {sel && selGuest && selRoom && (
+          {sel && (
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-3">
                   Reservation {sel.code}
-                  <span className={`text-xs px-2 py-0.5 rounded border ${resStatusMeta[sel.status].color}`}>{resStatusMeta[sel.status].label}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded border ${sel.statusColor}`}>
+                    {sel.statusLabel}
+                  </span>
                 </DialogTitle>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 text-sm">
-                <Field label="Guest" value={selGuest.name} />
-                <Field label="Email" value={selGuest.email} />
-                <Field label="Phone" value={selGuest.phone} />
-                <Field label="Loyalty" value={`${selGuest.loyaltyTier} · ${selGuest.loyaltyPoints} pts`} />
-                <Field label="Room" value={`${selRoom.number} · ${selRoom.type}`} />
-                <Field label="Source" value={sel.source} />
+                <Field label="Guest" value={sel.guestName} />
+                <Field label="Email" value={sel.guestEmail ?? "—"} />
+                <Field label="Phone" value={sel.guestPhone ?? "—"} />
+                <Field label="Room" value={sel.roomLabel} />
                 <Field label="Check-in" value={sel.checkIn} />
                 <Field label="Check-out" value={sel.checkOut} />
-                <Field label="Adults / Children" value={`${sel.adults} / ${sel.children}`} />
-                <Field label="Rate / night" value={fmtINR(sel.rate)} />
+                <Field label="Nights" value={sel.nights} />
+                <Field label="Amount" value={sel.amount ? fmtINR(sel.amount) : "—"} />
               </div>
               <DialogFooter className="gap-2 sm:gap-2">
-                {sel.status === "confirmed" && (
-                  <Button onClick={() => { checkIn(sel.id); toast.success("Guest checked in"); setOpen(null); }}>
-                    <LogIn className="size-4" /> Check In
+                {sel.canCheckIn && (
+                  <Button onClick={() => doCheckIn(sel.id)} disabled={checkInM.isPending}>
+                    {checkInM.isPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <LogIn className="size-4" />
+                    )}{" "}
+                    Check In
                   </Button>
                 )}
-                {sel.status === "checked_in" && (
-                  <Button onClick={() => { checkOut(sel.id); toast.success("Guest checked out"); setOpen(null); }}>
-                    <LogOut className="size-4" /> Check Out
+                {sel.canCheckOut && (
+                  <Button onClick={() => doCheckOut(sel.id)} disabled={checkOutM.isPending}>
+                    {checkOutM.isPending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <LogOut className="size-4" />
+                    )}{" "}
+                    Check Out
                   </Button>
                 )}
-                {(sel.status === "confirmed" || sel.status === "pending") && (
-                  <Button variant="destructive" onClick={() => { cancelReservation(sel.id); toast.success("Reservation cancelled"); setOpen(null); }}>
-                    <X className="size-4" /> Cancel
+                {!isLive && sel.bucket === "upcoming" && (
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      cancelReservation(sel.id);
+                      toast.success("Reservation cancelled");
+                      setOpen(null);
+                    }}
+                  >
+                    Cancel
                   </Button>
                 )}
-                <Button variant="outline" onClick={() => setOpen(null)}>Close</Button>
+                <Button variant="outline" onClick={() => setOpen(null)}>
+                  Close
+                </Button>
               </DialogFooter>
             </>
           )}
