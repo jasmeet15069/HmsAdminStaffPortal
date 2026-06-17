@@ -39,7 +39,22 @@ import {
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
+
+type Notif = { id: string; icon: string; title: string; body: string; time: string; read: boolean; category: string };
+
+const INITIAL_NOTIFS: Notif[] = [
+  { id: "n1",  icon: "🛎️", category: "Front Desk",   title: "Early check-in request",       body: "Room 204 — guest requesting check-in at 10 AM.",          time: "2 min ago",  read: false },
+  { id: "n2",  icon: "⚠️", category: "Maintenance",  title: "Work order #14 overdue",        body: "AC repair in Room 312 — assigned to Rajesh, SLA breached.", time: "18 min ago", read: false },
+  { id: "n3",  icon: "💳", category: "Billing",       title: "Unsettled folio",               body: "Mr. Sharma (Room 506) has a pending balance of ₹4,200.",   time: "1 hr ago",   read: false },
+  { id: "n4",  icon: "🍽️", category: "POS",           title: "KOT overdue — T-07",            body: "Table T-07 order has been in kitchen for 22 minutes.",     time: "1 hr ago",   read: true  },
+  { id: "n5",  icon: "🏨", category: "Housekeeping",  title: "6 rooms still dirty",           body: "Floors 3 & 4 have pending cleaning — checkout at 11 AM.",  time: "2 hrs ago",  read: true  },
+  { id: "n6",  icon: "📦", category: "Inventory",     title: "Low stock alert",               body: "Towels (Bath) stock at 12 units — reorder threshold is 20.", time: "3 hrs ago", read: true  },
+  { id: "n7",  icon: "👤", category: "CRM",           title: "VIP arrival tomorrow",          body: "Mr. Kapoor (Platinum) arriving 2026-06-18. Preferences: King bed, high floor.", time: "5 hrs ago", read: true },
+  { id: "n8",  icon: "📋", category: "Night Audit",   title: "Audit report ready",            body: "Night audit for 2026-06-16 has been completed and signed off.", time: "8 hrs ago", read: true },
+];
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -74,6 +89,11 @@ export default function AppShell() {
   // known after mount. Until then, render the neutral (signed-out) label.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifs, setNotifs] = useState<Notif[]>(INITIAL_NOTIFS);
+  const unreadCount = notifs.filter((n) => !n.read).length;
+  const markAllRead = () => setNotifs((p) => p.map((n) => ({ ...n, read: true })));
+  const markRead = (id: string) => setNotifs((p) => p.map((n) => n.id === id ? { ...n, read: true } : n));
   const authedUser = mounted ? user : null;
 
   // Auth guard: redirect unauthenticated users to /login; redirect authenticated
@@ -196,31 +216,36 @@ export default function AppShell() {
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="relative size-9">
                   <Bell className="size-[18px]" />
-                  <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-destructive ring-2 ring-card" />
+                  {unreadCount > 0 && (
+                    <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-destructive ring-2 ring-card" />
+                  )}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-80">
                 <DropdownMenuLabel className="flex items-center justify-between">
                   Notifications
-                  <Badge variant="secondary" className="text-[10px]">3 new</Badge>
+                  {unreadCount > 0 && <Badge variant="secondary" className="text-[10px]">{unreadCount} new</Badge>}
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                {[
-                  { icon: "🛎️", title: "Room 204 — Early check-in request", time: "2 min ago" },
-                  { icon: "⚠️", title: "Maintenance ticket #14 overdue", time: "18 min ago" },
-                  { icon: "💳", title: "Folio balance unsettled — Mr. Sharma", time: "1 hr ago" },
-                ].map((n) => (
-                  <DropdownMenuItem key={n.title} className="flex items-start gap-2.5 py-2.5">
-                    <span className="text-base mt-px">{n.icon}</span>
+                {notifs.filter((n) => !n.read).slice(0, 3).map((n) => (
+                  <DropdownMenuItem key={n.id} className="flex items-start gap-2.5 py-2.5" onClick={() => markRead(n.id)}>
+                    <span className="text-base mt-px shrink-0">{n.icon}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium leading-snug">{n.title}</p>
                       <p className="text-[10px] text-muted-foreground mt-0.5">{n.time}</p>
                     </div>
+                    <span className="size-1.5 rounded-full bg-primary shrink-0 mt-1.5" />
                   </DropdownMenuItem>
                 ))}
+                {unreadCount === 0 && (
+                  <div className="py-6 text-center text-xs text-muted-foreground">All caught up!</div>
+                )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="justify-center text-xs text-muted-foreground">
-                  View all notifications
+                <DropdownMenuItem
+                  className="justify-center text-xs font-medium text-primary hover:text-primary focus:text-primary"
+                  onClick={(e) => { e.preventDefault(); setNotifOpen(true); }}
+                >
+                  View all notifications →
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -285,6 +310,56 @@ export default function AppShell() {
         </main>
       </div>
       <Toaster richColors position="top-right" />
+
+      {/* All Notifications Sheet */}
+      <Sheet open={notifOpen} onOpenChange={setNotifOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-md flex flex-col p-0">
+          <SheetHeader className="px-6 py-4 border-b shrink-0">
+            <div className="flex items-center justify-between">
+              <SheetTitle className="text-base">All Notifications</SheetTitle>
+              {unreadCount > 0 && (
+                <Button variant="ghost" size="sm" className="text-xs h-7 text-primary" onClick={markAllRead}>
+                  Mark all as read
+                </Button>
+              )}
+            </div>
+            {unreadCount > 0 && (
+              <p className="text-xs text-muted-foreground">{unreadCount} unread notification{unreadCount !== 1 ? "s" : ""}</p>
+            )}
+          </SheetHeader>
+
+          <ScrollArea className="flex-1">
+            <div className="divide-y">
+              {notifs.map((n) => (
+                <button
+                  key={n.id}
+                  className={`w-full flex items-start gap-3 px-6 py-4 text-left transition-colors hover:bg-accent/50 ${n.read ? "opacity-70" : "bg-primary/[0.03]"}`}
+                  onClick={() => markRead(n.id)}
+                >
+                  <span className="text-xl shrink-0 mt-0.5">{n.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className={`text-sm leading-snug ${n.read ? "font-normal" : "font-semibold"}`}>{n.title}</p>
+                      {!n.read && <span className="size-2 rounded-full bg-primary shrink-0 mt-1.5" />}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{n.body}</p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <Badge variant="outline" className="text-[9px] px-1.5 py-0">{n.category}</Badge>
+                      <span className="text-[10px] text-muted-foreground">{n.time}</span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </ScrollArea>
+
+          <div className="px-6 py-3 border-t shrink-0">
+            <Button variant="outline" size="sm" className="w-full text-xs" onClick={() => { setNotifs([]); setNotifOpen(false); }}>
+              Clear all notifications
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

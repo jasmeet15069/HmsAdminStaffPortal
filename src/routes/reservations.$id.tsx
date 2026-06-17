@@ -56,7 +56,7 @@ function ReservationDetail() {
     const paysHTML = myPays.map((p) => `<tr><td>${p.date}</td><td>${p.method}</td><td>${p.reference ?? ""}</td><td class="right">${fmtINR(p.amount)}</td></tr>`).join("");
     printHTML(`Invoice ${r.code}`, `
       <div class="brand">
-        <div><h1>Azure Grand Mumbai</h1><div class="muted">123 Marine Drive · GSTIN 27AAACA1234B1Z5</div></div>
+        <div><h1>Hotel Harmony</h1><div class="muted">123 Marine Drive · GSTIN 27AAACA1234B1Z5</div></div>
         <div style="text-align:right"><h1>INVOICE</h1><div class="muted">INV-${r.code.slice(3)} · ${r.checkOut}</div></div>
       </div>
       <h2>Bill To</h2>

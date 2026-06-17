@@ -80,7 +80,7 @@ function NightAudit() {
     const arrRows = arrivals.map((r) => `<tr><td>${r.code}</td><td>${guests.find((g) => g.id === r.guestId)?.name ?? "—"}</td><td>${r.checkIn}</td><td class="right">${fmtINR(r.rate)}</td></tr>`).join("");
     const depRows = departures.map((r) => `<tr><td>${r.code}</td><td>${guests.find((g) => g.id === r.guestId)?.name ?? "—"}</td><td>${r.checkOut}</td><td class="right">${fmtINR(r.rate)}</td></tr>`).join("");
     printHTML(`Night Audit ${today}`, `
-      <div class="brand"><div><h1>Night Audit Report</h1><div class="muted">Azure Grand Mumbai</div></div><div style="text-align:right"><h1>${today}</h1></div></div>
+      <div class="brand"><div><h1>Night Audit Report</h1><div class="muted">Hotel Harmony</div></div><div style="text-align:right"><h1>${today}</h1></div></div>
       <h2>Summary</h2>
       <table>
         <tr><th>Metric</th><th class="right">Value</th></tr>

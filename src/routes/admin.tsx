@@ -92,7 +92,7 @@ function Admin() {
             <Card className="p-5 space-y-4">
               <h3 className="font-semibold">Organization Settings</h3>
               <div className="grid grid-cols-2 gap-3">
-                {[["Organization Name", "Azure Hospitality Group"], ["GSTIN", "27AABCA1234X1Z5"], ["Default Language", "English (India)"], ["Time Zone", "Asia/Kolkata (IST)"], ["Currency", "INR (₹)"], ["GST Rate", "18%"]].map(([label, val]) => (
+                {[["Organization Name", "Hotel Harmony Group"], ["GSTIN", "27AABCA1234X1Z5"], ["Default Language", "English (India)"], ["Time Zone", "Asia/Kolkata (IST)"], ["Currency", "INR (₹)"], ["GST Rate", "18%"]].map(([label, val]) => (
                   <div key={label}>
                     <Label className="text-xs">{label}</Label>
                     <Input className="h-8 mt-1 text-sm" defaultValue={val} />

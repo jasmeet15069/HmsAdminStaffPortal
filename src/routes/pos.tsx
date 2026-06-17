@@ -192,7 +192,7 @@ function KOTModal({ order, onClose }: { order: { outlet: string; table?: string;
           </div>
         ))}
         <Separator className="my-2" />
-        <div className="text-center text-xs text-muted-foreground">KOT — Azure Grand Mumbai</div>
+        <div className="text-center text-xs text-muted-foreground">KOT — Hotel Harmony</div>
       </div>
       <Button onClick={onClose} className="w-full">Close</Button>
     </DialogContent>
@@ -206,7 +206,7 @@ function ReceiptModal({ order, onClose }: { order: POSOrder; onClose: () => void
     const tax = Math.round(order.total / 1.18 * 0.18);
     const base = order.total - tax;
     printHTML(`Receipt — ${order.outlet}`, `
-      <div class="brand"><div><h1>Azure Grand Mumbai</h1><div class="muted">GST: 27AABCA1234X1Z5</div></div><div style="text-align:right"><h1>RECEIPT</h1><div class="muted">${order.createdAt}</div></div></div>
+      <div class="brand"><div><h1>Hotel Harmony</h1><div class="muted">GST: 27AABCA1234X1Z5</div></div><div style="text-align:right"><h1>RECEIPT</h1><div class="muted">${order.createdAt}</div></div></div>
       <div><strong>Outlet:</strong> ${order.outlet} &nbsp;&nbsp; <strong>Table:</strong> ${order.table ?? "Room Svc"}</div>
       <table style="margin-top:12px"><tr><th>Item</th><th class="right">Amount</th></tr>${rows}</table>
       <div class="totals">

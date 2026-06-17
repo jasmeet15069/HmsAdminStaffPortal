@@ -313,9 +313,9 @@ function seed() {
   ];
 
   const properties: Property[] = [
-    { id: "p1", name: "Azure Grand Mumbai", city: "Mumbai", rooms: 60, occupancy: 78, adr: 6200 },
-    { id: "p2", name: "Azure Heritage Jaipur", city: "Jaipur", rooms: 45, occupancy: 82, adr: 5400 },
-    { id: "p3", name: "Azure Beach Goa", city: "Goa", rooms: 80, occupancy: 91, adr: 7800 },
+    { id: "p1", name: "Hotel Harmony Mumbai", city: "Mumbai", rooms: 60, occupancy: 78, adr: 6200 },
+    { id: "p2", name: "Hotel Harmony Jaipur", city: "Jaipur", rooms: 45, occupancy: 82, adr: 5400 },
+    { id: "p3", name: "Hotel Harmony Goa", city: "Goa", rooms: 80, occupancy: 91, adr: 7800 },
   ];
 
   return { rooms, guests, reservations, folios, payments, tasks, maintenance, inventory, orders, purchaseOrders, users, properties };
