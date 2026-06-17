@@ -96,12 +96,25 @@ export interface InventoryItem {
   supplier?: string;
 }
 
+export type Outlet = "Restaurant" | "Bar" | "Room Service" | "Spa";
+
+export interface MenuItem {
+  id: string;
+  outlet: Outlet;
+  name: string;
+  price: number;
+  cat: string;
+  desc?: string;
+  active: boolean;
+}
+
 export interface POSOrder {
   id: string;
-  outlet: "Restaurant" | "Bar" | "Room Service" | "Spa";
+  orderNumber: string;
+  outlet: Outlet;
   table?: string;
   roomId?: string;
-  items: { name: string; qty: number; price: number }[];
+  items: { name: string; qty: number; price: number; note?: string }[];
   status: "Open" | "Sent" | "Paid";
   total: number;
   createdAt: string;
@@ -117,11 +130,13 @@ export interface PurchaseOrder {
   createdAt: string;
 }
 
+export type UserRole = "Admin" | "Manager" | "Front Desk" | "Receptionist" | "Housekeeping" | "Accounts" | "F&B" | "Restaurant Manager";
+
 export interface User {
   id: string;
   name: string;
   email: string;
-  role: "Admin" | "Manager" | "Front Desk" | "Housekeeping" | "Accounts" | "F&B";
+  role: UserRole;
   active: boolean;
   lastLogin?: string;
 }
@@ -151,6 +166,7 @@ interface State {
   orders: POSOrder[];
   purchaseOrders: PurchaseOrder[];
   users: User[];
+  menuItems: MenuItem[];
 
   setProperty: (id: string) => void;
   addReservation: (r: Omit<Reservation, "id" | "code" | "createdAt">) => Reservation;
@@ -165,8 +181,11 @@ interface State {
   updateTask: (id: string, patch: Partial<HousekeepingTask>) => void;
   addTicket: (t: Omit<MaintenanceTicket, "id" | "createdAt">) => void;
   updateTicket: (id: string, patch: Partial<MaintenanceTicket>) => void;
-  addOrder: (o: Omit<POSOrder, "id" | "createdAt">) => void;
+  addOrder: (o: Omit<POSOrder, "id" | "orderNumber" | "createdAt">) => void;
   updateOrder: (id: string, patch: Partial<POSOrder>) => void;
+  addMenuItem: (m: Omit<MenuItem, "id">) => void;
+  updateMenuItem: (id: string, patch: Partial<MenuItem>) => void;
+  removeMenuItem: (id: string) => void;
   addPO: (p: Omit<PurchaseOrder, "id" | "createdAt">) => void;
   updatePO: (id: string, patch: Partial<PurchaseOrder>) => void;
   receivePO: (id: string) => void;
@@ -318,7 +337,93 @@ function seed() {
     { id: "p3", name: "Hotel Harmony Goa", city: "Goa", rooms: 80, occupancy: 91, adr: 7800 },
   ];
 
-  return { rooms, guests, reservations, folios, payments, tasks, maintenance, inventory, orders, purchaseOrders, users, properties };
+  const menuItems: MenuItem[] = [
+    // Restaurant
+    { id: "r1",  outlet: "Restaurant", name: "Paneer Tikka",       price: 380,  cat: "Starter",   desc: "Grilled cottage cheese cubes",       active: true },
+    { id: "r2",  outlet: "Restaurant", name: "Chicken Tikka",       price: 420,  cat: "Starter",   desc: "Tandoor-smoked chicken",             active: true },
+    { id: "r3",  outlet: "Restaurant", name: "Tomato Soup",         price: 220,  cat: "Starter",   desc: "Creamy tomato bisque",               active: true },
+    { id: "r4",  outlet: "Restaurant", name: "Spring Rolls",        price: 280,  cat: "Starter",   desc: "Crispy veg rolls",                   active: true },
+    { id: "r5",  outlet: "Restaurant", name: "Butter Chicken",      price: 520,  cat: "Main",      desc: "Murgh makhani, butter sauce",        active: true },
+    { id: "r6",  outlet: "Restaurant", name: "Dal Makhani",         price: 280,  cat: "Main",      desc: "Slow-cooked black lentil",           active: true },
+    { id: "r7",  outlet: "Restaurant", name: "Veg Biryani",         price: 340,  cat: "Main",      desc: "Fragrant basmati rice",              active: true },
+    { id: "r8",  outlet: "Restaurant", name: "Chicken Biryani",     price: 420,  cat: "Main",      desc: "Dum-cooked chicken biryani",         active: true },
+    { id: "r9",  outlet: "Restaurant", name: "Margherita Pizza",    price: 480,  cat: "Main",      desc: "Fresh mozzarella & basil",           active: true },
+    { id: "r10", outlet: "Restaurant", name: "Pasta Arrabiata",     price: 380,  cat: "Main",      desc: "Penne in spicy tomato",              active: true },
+    { id: "r11", outlet: "Restaurant", name: "Grilled Fish",        price: 680,  cat: "Main",      desc: "Sea bass with herb butter",          active: true },
+    { id: "r12", outlet: "Restaurant", name: "Mushroom Risotto",    price: 460,  cat: "Main",      desc: "Arborio rice, wild mushroom",        active: true },
+    { id: "r13", outlet: "Restaurant", name: "Garlic Naan",         price: 80,   cat: "Bread",     desc: "Butter-glazed naan",                 active: true },
+    { id: "r14", outlet: "Restaurant", name: "Naan",                price: 60,   cat: "Bread",                                                 active: true },
+    { id: "r15", outlet: "Restaurant", name: "Laccha Paratha",      price: 70,   cat: "Bread",                                                 active: true },
+    { id: "r16", outlet: "Restaurant", name: "Caesar Salad",        price: 320,  cat: "Salad",     desc: "Romaine, parmesan, croutons",        active: true },
+    { id: "r17", outlet: "Restaurant", name: "Greek Salad",         price: 280,  cat: "Salad",                                                 active: true },
+    { id: "r18", outlet: "Restaurant", name: "Gulab Jamun",         price: 180,  cat: "Dessert",   desc: "Milk solids in sugar syrup",         active: true },
+    { id: "r19", outlet: "Restaurant", name: "Chocolate Brownie",   price: 240,  cat: "Dessert",   desc: "Warm, with vanilla ice cream",       active: true },
+    { id: "r20", outlet: "Restaurant", name: "Cheesecake",          price: 280,  cat: "Dessert",                                               active: true },
+    { id: "r21", outlet: "Restaurant", name: "Fresh Lime Soda",     price: 120,  cat: "Beverage",                                              active: true },
+    { id: "r22", outlet: "Restaurant", name: "Mango Lassi",         price: 160,  cat: "Beverage",                                              active: true },
+    { id: "r23", outlet: "Restaurant", name: "Masala Chai",         price: 80,   cat: "Beverage",                                              active: true },
+    { id: "r24", outlet: "Restaurant", name: "Cold Coffee",         price: 180,  cat: "Beverage",                                              active: true },
+    { id: "r25", outlet: "Restaurant", name: "Cappuccino",          price: 180,  cat: "Beverage",                                              active: true },
+    { id: "r26", outlet: "Restaurant", name: "Club Sandwich",       price: 380,  cat: "Snack",     desc: "Triple-decker with fries",           active: true },
+    { id: "r27", outlet: "Restaurant", name: "French Fries",        price: 200,  cat: "Snack",                                                 active: true },
+    // Bar
+    { id: "b1",  outlet: "Bar", name: "Old Fashioned",       price: 680,  cat: "Cocktail",  desc: "Bourbon, bitters, orange",           active: true },
+    { id: "b2",  outlet: "Bar", name: "Mojito",              price: 520,  cat: "Cocktail",  desc: "Rum, mint, lime, soda",              active: true },
+    { id: "b3",  outlet: "Bar", name: "Cosmopolitan",        price: 580,  cat: "Cocktail",  desc: "Vodka, triple sec, cranberry",       active: true },
+    { id: "b4",  outlet: "Bar", name: "Margarita",           price: 560,  cat: "Cocktail",  desc: "Tequila, lime, salt rim",            active: true },
+    { id: "b5",  outlet: "Bar", name: "Whiskey Sour",        price: 620,  cat: "Cocktail",  desc: "Bourbon, lemon, egg white",          active: true },
+    { id: "b6",  outlet: "Bar", name: "Negroni",             price: 650,  cat: "Cocktail",  desc: "Gin, Campari, vermouth",             active: true },
+    { id: "b7",  outlet: "Bar", name: "Virgin Mojito",       price: 280,  cat: "Mocktail",  desc: "Mint, lime, soda",                   active: true },
+    { id: "b8",  outlet: "Bar", name: "Shirley Temple",      price: 260,  cat: "Mocktail",                                              active: true },
+    { id: "b9",  outlet: "Bar", name: "Blue Lagoon (N/A)",   price: 300,  cat: "Mocktail",                                              active: true },
+    { id: "b10", outlet: "Bar", name: "Kingfisher",          price: 380,  cat: "Beer",      desc: "330ml bottle",                       active: true },
+    { id: "b11", outlet: "Bar", name: "Heineken",            price: 450,  cat: "Beer",      desc: "330ml bottle",                       active: true },
+    { id: "b12", outlet: "Bar", name: "Corona",              price: 480,  cat: "Beer",      desc: "355ml bottle",                       active: true },
+    { id: "b13", outlet: "Bar", name: "House Whiskey",       price: 420,  cat: "Spirit",    desc: "60ml peg",                           active: true },
+    { id: "b14", outlet: "Bar", name: "Premium Scotch",      price: 780,  cat: "Spirit",    desc: "60ml — single malt",                 active: true },
+    { id: "b15", outlet: "Bar", name: "Vodka",               price: 380,  cat: "Spirit",    desc: "60ml peg",                           active: true },
+    { id: "b16", outlet: "Bar", name: "House Red Wine",      price: 580,  cat: "Wine",      desc: "150ml glass",                        active: true },
+    { id: "b17", outlet: "Bar", name: "House White Wine",    price: 540,  cat: "Wine",      desc: "150ml glass",                        active: true },
+    { id: "b18", outlet: "Bar", name: "Prosecco",            price: 780,  cat: "Wine",      desc: "150ml glass",                        active: true },
+    { id: "b19", outlet: "Bar", name: "Mixed Nuts",          price: 280,  cat: "Snack",                                                 active: true },
+    { id: "b20", outlet: "Bar", name: "Nachos & Salsa",      price: 380,  cat: "Snack",                                                 active: true },
+    { id: "b21", outlet: "Bar", name: "Cheese Platter",      price: 680,  cat: "Snack",     desc: "3 cheeses, crackers, fruit",         active: true },
+    { id: "b22", outlet: "Bar", name: "Mini Sliders (4 pc)", price: 480,  cat: "Snack",                                                 active: true },
+    // Room Service
+    { id: "rs1",  outlet: "Room Service", name: "Club Sandwich",          price: 420,  cat: "Snack",     desc: "With waffle fries",                  active: true },
+    { id: "rs2",  outlet: "Room Service", name: "Butter Chicken",          price: 580,  cat: "Main",      desc: "With rice & naan",                   active: true },
+    { id: "rs3",  outlet: "Room Service", name: "Veg Biryani",             price: 380,  cat: "Main",                                                  active: true },
+    { id: "rs4",  outlet: "Room Service", name: "Pasta Arrabiata",         price: 420,  cat: "Main",                                                  active: true },
+    { id: "rs5",  outlet: "Room Service", name: "Caesar Salad",            price: 360,  cat: "Salad",                                                 active: true },
+    { id: "rs6",  outlet: "Room Service", name: "Continental Breakfast",   price: 680,  cat: "Breakfast", desc: "Eggs, toast, juice, coffee",          active: true },
+    { id: "rs7",  outlet: "Room Service", name: "Indian Breakfast",        price: 580,  cat: "Breakfast", desc: "Poha / Idli, chai, fruit",            active: true },
+    { id: "rs8",  outlet: "Room Service", name: "Pancakes",                price: 380,  cat: "Breakfast",                                             active: true },
+    { id: "rs9",  outlet: "Room Service", name: "Chocolate Brownie",       price: 280,  cat: "Dessert",                                               active: true },
+    { id: "rs10", outlet: "Room Service", name: "Fresh Fruit Platter",     price: 380,  cat: "Dessert",                                               active: true },
+    { id: "rs11", outlet: "Room Service", name: "Fresh Lime Soda",         price: 160,  cat: "Beverage",                                              active: true },
+    { id: "rs12", outlet: "Room Service", name: "Masala Chai",             price: 120,  cat: "Beverage",                                              active: true },
+    { id: "rs13", outlet: "Room Service", name: "Cappuccino",              price: 220,  cat: "Beverage",  desc: "Includes delivery surcharge",         active: true },
+    { id: "rs14", outlet: "Room Service", name: "Bottled Water (1L)",      price: 80,   cat: "Beverage",                                              active: true },
+    { id: "rs15", outlet: "Room Service", name: "Soft Drink",              price: 120,  cat: "Beverage",                                              active: true },
+    { id: "rs16", outlet: "Room Service", name: "Beer (Kingfisher)",       price: 480,  cat: "Beverage",                                              active: true },
+    // Spa
+    { id: "sp1",  outlet: "Spa", name: "Swedish Massage 60 min",  price: 2800, cat: "Massage",  desc: "Full-body relaxation",                active: true },
+    { id: "sp2",  outlet: "Spa", name: "Swedish Massage 90 min",  price: 3800, cat: "Massage",  desc: "Extended session",                    active: true },
+    { id: "sp3",  outlet: "Spa", name: "Deep Tissue 60 min",      price: 3200, cat: "Massage",  desc: "Targeted muscle relief",              active: true },
+    { id: "sp4",  outlet: "Spa", name: "Deep Tissue 90 min",      price: 4500, cat: "Massage",  desc: "Extended deep tissue",                active: true },
+    { id: "sp5",  outlet: "Spa", name: "Aromatherapy 60 min",     price: 3000, cat: "Massage",  desc: "Essential oils blend",                active: true },
+    { id: "sp6",  outlet: "Spa", name: "Hot Stone Massage",        price: 4200, cat: "Massage",  desc: "Volcanic stones therapy",             active: true },
+    { id: "sp7",  outlet: "Spa", name: "Classic Facial",           price: 1800, cat: "Facial",   desc: "Deep cleanse + mask",                 active: true },
+    { id: "sp8",  outlet: "Spa", name: "Anti-Ageing Facial",       price: 2800, cat: "Facial",   desc: "Premium collagen treatment",          active: true },
+    { id: "sp9",  outlet: "Spa", name: "Manicure",                 price: 1200, cat: "Nails",                                                active: true },
+    { id: "sp10", outlet: "Spa", name: "Pedicure",                 price: 1400, cat: "Nails",                                                active: true },
+    { id: "sp11", outlet: "Spa", name: "Mani + Pedi Combo",        price: 2200, cat: "Nails",                                                active: true },
+    { id: "sp12", outlet: "Spa", name: "Couple Retreat (120 min)", price: 9500, cat: "Package",  desc: "2 × Swedish + bubble bath",           active: true },
+    { id: "sp13", outlet: "Spa", name: "Full Body Package",        price: 7800, cat: "Package",  desc: "Massage + facial + mani",             active: true },
+    { id: "sp14", outlet: "Spa", name: "Relaxation Escape",        price: 5500, cat: "Package",  desc: "90-min massage + steam",              active: true },
+  ];
+
+  return { rooms, guests, reservations, folios, payments, tasks, maintenance, inventory, orders, purchaseOrders, users, properties, menuItems };
 }
 
 export const useMHMS = create<State>()(
@@ -379,7 +484,11 @@ export const useMHMS = create<State>()(
       addTicket: (t) => set({ maintenance: [{ ...t, id: uid(), createdAt: today() }, ...get().maintenance] }),
       updateTicket: (id, patch) =>
         set({ maintenance: get().maintenance.map((t) => (t.id === id ? { ...t, ...patch } : t)) }),
-      addOrder: (o) => set({ orders: [{ ...o, id: uid(), createdAt: today() }, ...get().orders] }),
+      addOrder: (o) => {
+        const seq = get().orders.length + 1;
+        const orderNumber = `ORD-${String(seq).padStart(5, "0")}`;
+        set({ orders: [{ ...o, id: uid(), orderNumber, createdAt: new Date().toLocaleString("en-IN") }, ...get().orders] });
+      },
       updateOrder: (id, patch) => set({ orders: get().orders.map((o) => (o.id === id ? { ...o, ...patch } : o)) }),
       addPO: (p) => set({ purchaseOrders: [{ ...p, id: uid(), createdAt: today() }, ...get().purchaseOrders] }),
       updatePO: (id, patch) => set({ purchaseOrders: get().purchaseOrders.map((p) => (p.id === id ? { ...p, ...patch } : p)) }),
@@ -405,6 +514,9 @@ export const useMHMS = create<State>()(
         set({ guests: get().guests.map((g) => (g.id === id ? { ...g, ...patch } : g)) }),
       updateInventory: (id, patch) =>
         set({ inventory: get().inventory.map((i) => (i.id === id ? { ...i, ...patch } : i)) }),
+      addMenuItem: (m) => set({ menuItems: [...get().menuItems, { ...m, id: uid() }] }),
+      updateMenuItem: (id, patch) => set({ menuItems: get().menuItems.map((m) => (m.id === id ? { ...m, ...patch } : m)) }),
+      removeMenuItem: (id) => set({ menuItems: get().menuItems.filter((m) => m.id !== id) }),
       addUser: (u) => set({ users: [{ ...u, id: uid() }, ...get().users] }),
       updateUser: (id, patch) => set({ users: get().users.map((u) => (u.id === id ? { ...u, ...patch } : u)) }),
       rollBusinessDate: () => {
@@ -420,7 +532,7 @@ export const useMHMS = create<State>()(
         set({ auditLog: [{ id: uid(), date: today(), user, action }, ...get().auditLog].slice(0, 200) }),
       resetData: () => set({ currentProperty: "p1", businessDate: today(), auditLog: [{ id: uid(), date: today(), user: "System", action: "Demo data reset" }], ...seed() }),
     }),
-    { name: "mhms-store-v2" },
+    { name: "mhms-store-v3" },
   ),
 );
 

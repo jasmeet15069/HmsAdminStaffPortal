@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
-import type { POSOrder } from "@/lib/mhms-store";
+import type { POSOrder, Outlet, MenuItem } from "@/lib/mhms-store";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,99 +25,7 @@ import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { printHTML } from "@/lib/csv";
 
-// ── Menu data ──────────────────────────────────────────────────────────────────
-type Outlet = "Restaurant" | "Bar" | "Room Service" | "Spa";
-type MenuItem = { id: string; name: string; price: number; cat: string; desc?: string };
-
-const MENU: Record<Outlet, MenuItem[]> = {
-  Restaurant: [
-    { id: "r1",  name: "Paneer Tikka",       price: 380, cat: "Starter",  desc: "Grilled cottage cheese cubes" },
-    { id: "r2",  name: "Chicken Tikka",       price: 420, cat: "Starter",  desc: "Tandoor-smoked chicken" },
-    { id: "r3",  name: "Tomato Soup",         price: 220, cat: "Starter",  desc: "Creamy tomato bisque" },
-    { id: "r4",  name: "Spring Rolls",        price: 280, cat: "Starter",  desc: "Crispy veg rolls" },
-    { id: "r5",  name: "Butter Chicken",      price: 520, cat: "Main",     desc: "Murgh makhani, butter sauce" },
-    { id: "r6",  name: "Dal Makhani",         price: 280, cat: "Main",     desc: "Slow-cooked black lentil" },
-    { id: "r7",  name: "Veg Biryani",         price: 340, cat: "Main",     desc: "Fragrant basmati rice" },
-    { id: "r8",  name: "Chicken Biryani",     price: 420, cat: "Main",     desc: "Dum-cooked chicken biryani" },
-    { id: "r9",  name: "Margherita Pizza",    price: 480, cat: "Main",     desc: "Fresh mozzarella & basil" },
-    { id: "r10", name: "Pasta Arrabiata",     price: 380, cat: "Main",     desc: "Penne in spicy tomato" },
-    { id: "r11", name: "Grilled Fish",        price: 680, cat: "Main",     desc: "Sea bass with herb butter" },
-    { id: "r12", name: "Mushroom Risotto",    price: 460, cat: "Main",     desc: "Arborio rice, wild mushroom" },
-    { id: "r13", name: "Garlic Naan",         price: 80,  cat: "Bread",    desc: "Butter-glazed naan" },
-    { id: "r14", name: "Naan",                price: 60,  cat: "Bread" },
-    { id: "r15", name: "Laccha Paratha",      price: 70,  cat: "Bread" },
-    { id: "r16", name: "Caesar Salad",        price: 320, cat: "Salad",    desc: "Romaine, parmesan, croutons" },
-    { id: "r17", name: "Greek Salad",         price: 280, cat: "Salad" },
-    { id: "r18", name: "Gulab Jamun",         price: 180, cat: "Dessert",  desc: "Milk solids in sugar syrup" },
-    { id: "r19", name: "Chocolate Brownie",   price: 240, cat: "Dessert",  desc: "Warm, with vanilla ice cream" },
-    { id: "r20", name: "Cheesecake",          price: 280, cat: "Dessert" },
-    { id: "r21", name: "Fresh Lime Soda",     price: 120, cat: "Beverage" },
-    { id: "r22", name: "Mango Lassi",         price: 160, cat: "Beverage" },
-    { id: "r23", name: "Masala Chai",         price: 80,  cat: "Beverage" },
-    { id: "r24", name: "Cold Coffee",         price: 180, cat: "Beverage" },
-    { id: "r25", name: "Cappuccino",          price: 180, cat: "Beverage" },
-    { id: "r26", name: "Club Sandwich",       price: 380, cat: "Snack",    desc: "Triple-decker with fries" },
-    { id: "r27", name: "French Fries",        price: 200, cat: "Snack" },
-  ],
-  Bar: [
-    { id: "b1",  name: "Old Fashioned",       price: 680, cat: "Cocktail", desc: "Bourbon, bitters, orange" },
-    { id: "b2",  name: "Mojito",              price: 520, cat: "Cocktail", desc: "Rum, mint, lime, soda" },
-    { id: "b3",  name: "Cosmopolitan",        price: 580, cat: "Cocktail", desc: "Vodka, triple sec, cranberry" },
-    { id: "b4",  name: "Margarita",           price: 560, cat: "Cocktail", desc: "Tequila, lime, salt rim" },
-    { id: "b5",  name: "Whiskey Sour",        price: 620, cat: "Cocktail", desc: "Bourbon, lemon, egg white" },
-    { id: "b6",  name: "Negroni",             price: 650, cat: "Cocktail", desc: "Gin, Campari, vermouth" },
-    { id: "b7",  name: "Virgin Mojito",       price: 280, cat: "Mocktail", desc: "Mint, lime, soda" },
-    { id: "b8",  name: "Shirley Temple",      price: 260, cat: "Mocktail" },
-    { id: "b9",  name: "Blue Lagoon (N/A)",   price: 300, cat: "Mocktail" },
-    { id: "b10", name: "Kingfisher",          price: 380, cat: "Beer",     desc: "330ml bottle" },
-    { id: "b11", name: "Heineken",            price: 450, cat: "Beer",     desc: "330ml bottle" },
-    { id: "b12", name: "Corona",              price: 480, cat: "Beer",     desc: "355ml bottle" },
-    { id: "b13", name: "House Whiskey",       price: 420, cat: "Spirit",   desc: "60ml peg" },
-    { id: "b14", name: "Premium Scotch",      price: 780, cat: "Spirit",   desc: "60ml — single malt" },
-    { id: "b15", name: "Vodka",               price: 380, cat: "Spirit",   desc: "60ml peg" },
-    { id: "b16", name: "House Red Wine",      price: 580, cat: "Wine",     desc: "150ml glass" },
-    { id: "b17", name: "House White Wine",    price: 540, cat: "Wine",     desc: "150ml glass" },
-    { id: "b18", name: "Prosecco",            price: 780, cat: "Wine",     desc: "150ml glass" },
-    { id: "b19", name: "Mixed Nuts",          price: 280, cat: "Snack" },
-    { id: "b20", name: "Nachos & Salsa",      price: 380, cat: "Snack" },
-    { id: "b21", name: "Cheese Platter",      price: 680, cat: "Snack",    desc: "3 cheeses, crackers, fruit" },
-    { id: "b22", name: "Mini Sliders (4 pc)", price: 480, cat: "Snack" },
-  ],
-  "Room Service": [
-    { id: "rs1",  name: "Club Sandwich",          price: 420, cat: "Snack",     desc: "With waffle fries" },
-    { id: "rs2",  name: "Butter Chicken",          price: 580, cat: "Main",      desc: "With rice & naan" },
-    { id: "rs3",  name: "Veg Biryani",             price: 380, cat: "Main" },
-    { id: "rs4",  name: "Pasta Arrabiata",         price: 420, cat: "Main" },
-    { id: "rs5",  name: "Caesar Salad",            price: 360, cat: "Salad" },
-    { id: "rs6",  name: "Continental Breakfast",   price: 680, cat: "Breakfast", desc: "Eggs, toast, juice, coffee" },
-    { id: "rs7",  name: "Indian Breakfast",        price: 580, cat: "Breakfast", desc: "Poha / Idli, chai, fruit" },
-    { id: "rs8",  name: "Pancakes",                price: 380, cat: "Breakfast" },
-    { id: "rs9",  name: "Chocolate Brownie",       price: 280, cat: "Dessert" },
-    { id: "rs10", name: "Fresh Fruit Platter",     price: 380, cat: "Dessert" },
-    { id: "rs11", name: "Fresh Lime Soda",         price: 160, cat: "Beverage" },
-    { id: "rs12", name: "Masala Chai",             price: 120, cat: "Beverage" },
-    { id: "rs13", name: "Cappuccino",              price: 220, cat: "Beverage",  desc: "Includes delivery surcharge" },
-    { id: "rs14", name: "Bottled Water (1L)",      price: 80,  cat: "Beverage" },
-    { id: "rs15", name: "Soft Drink",              price: 120, cat: "Beverage" },
-    { id: "rs16", name: "Beer (Kingfisher)",       price: 480, cat: "Beverage" },
-  ],
-  Spa: [
-    { id: "sp1",  name: "Swedish Massage 60 min",  price: 2800, cat: "Massage",  desc: "Full-body relaxation" },
-    { id: "sp2",  name: "Swedish Massage 90 min",  price: 3800, cat: "Massage",  desc: "Extended session" },
-    { id: "sp3",  name: "Deep Tissue 60 min",      price: 3200, cat: "Massage",  desc: "Targeted muscle relief" },
-    { id: "sp4",  name: "Deep Tissue 90 min",      price: 4500, cat: "Massage",  desc: "Extended deep tissue" },
-    { id: "sp5",  name: "Aromatherapy 60 min",     price: 3000, cat: "Massage",  desc: "Essential oils blend" },
-    { id: "sp6",  name: "Hot Stone Massage",        price: 4200, cat: "Massage",  desc: "Volcanic stones therapy" },
-    { id: "sp7",  name: "Classic Facial",           price: 1800, cat: "Facial",   desc: "Deep cleanse + mask" },
-    { id: "sp8",  name: "Anti-Ageing Facial",       price: 2800, cat: "Facial",   desc: "Premium collagen treatment" },
-    { id: "sp9",  name: "Manicure",                 price: 1200, cat: "Nails" },
-    { id: "sp10", name: "Pedicure",                 price: 1400, cat: "Nails" },
-    { id: "sp11", name: "Mani + Pedi Combo",        price: 2200, cat: "Nails" },
-    { id: "sp12", name: "Couple Retreat (120 min)", price: 9500, cat: "Package",  desc: "2 × Swedish + bubble bath" },
-    { id: "sp13", name: "Full Body Package",        price: 7800, cat: "Package",  desc: "Massage + facial + mani" },
-    { id: "sp14", name: "Relaxation Escape",        price: 5500, cat: "Package",  desc: "90-min massage + steam" },
-  ],
-};
+// ── Static outlet data ─────────────────────────────────────────────────────────
 
 const OUTLET_TABLES: Record<Outlet, string[]> = {
   Restaurant:     ["T-01","T-02","T-03","T-04","T-05","T-06","T-07","T-08","T-09","T-10","T-11","T-12"],
@@ -253,7 +161,7 @@ export const Route = createFileRoute("/pos")({
 
 // ── Main POS Component ────────────────────────────────────────────────────────
 function POS() {
-  const { orders, addOrder, updateOrder, rooms } = useMHMS();
+  const { orders, addOrder, updateOrder, rooms, menuItems: allMenuItems } = useMHMS();
 
   // New order state
   const [outlet, setOutlet] = useState<Outlet>("Restaurant");
@@ -294,14 +202,14 @@ function POS() {
   const [tableCovers, setTableCovers] = useState<Record<string, number>>({});
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
 
-  // Derived
-  const menuItems = MENU[outlet];
-  const categories = useMemo(() => ["All", ...Array.from(new Set(menuItems.map((m) => m.cat)))], [outlet]);
-  const filteredMenu = useMemo(() => menuItems.filter((m) => {
+  // Derived — menu comes from store, filtered to current outlet & active items
+  const outletMenu = useMemo(() => allMenuItems.filter((m) => m.outlet === outlet && m.active), [allMenuItems, outlet]);
+  const categories = useMemo(() => ["All", ...Array.from(new Set(outletMenu.map((m) => m.cat)))], [outletMenu]);
+  const filteredMenu = useMemo(() => outletMenu.filter((m) => {
     const matchCat = catFilter === "All" || m.cat === catFilter;
     const matchSearch = m.name.toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
-  }), [menuItems, catFilter, search]);
+  }), [outletMenu, catFilter, search]);
 
   const subtotal = cart.reduce((s, i) => s + i.qty * i.price, 0);
   const discountAmt = Math.round(subtotal * discountPct / 100);
@@ -383,6 +291,7 @@ function POS() {
     setOutlet(o); setCatFilter("All"); setSearch("");
     const tables = OUTLET_TABLES[o];
     if (tables.length) setTable(tables[0]);
+    else setTable("");
   };
 
   return (
@@ -754,7 +663,7 @@ function POS() {
                       .filter((o) => !historySearch || o.outlet.toLowerCase().includes(historySearch.toLowerCase()) || (o.table ?? "").toLowerCase().includes(historySearch.toLowerCase()) || o.items.some((i) => i.name.toLowerCase().includes(historySearch.toLowerCase())))
                       .map((o, idx) => (
                         <tr key={o.id} className="border-b last:border-0 hover:bg-accent/5">
-                          <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{String(paidOrders.length - idx).padStart(4, "0")}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{o.orderNumber ?? `#${String(paidOrders.length - idx).padStart(4, "0")}`}</td>
                           <td className="px-4 py-3"><div className="flex items-center gap-1.5">{OUTLET_ICON[o.outlet as Outlet]}{o.outlet}</div></td>
                           <td className="px-4 py-3 font-mono text-xs">{o.table ?? "Room Svc"}</td>
                           <td className="px-4 py-3 text-xs text-muted-foreground max-w-[200px] truncate">{o.items.map((i) => `${i.qty}× ${i.name}`).join(", ")}</td>
