@@ -45,12 +45,12 @@ import { toast } from "sonner";
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/reservations", label: "Reservations", icon: CalendarCheck },
+  { to: "/pos", label: "POS & Restaurant", icon: UtensilsCrossed },
   { to: "/front-desk", label: "Front Desk", icon: Hotel },
   { to: "/housekeeping", label: "Housekeeping", icon: Sparkles },
   { to: "/revenue", label: "Revenue Mgmt", icon: TrendingUp },
   { to: "/billing", label: "Billing & Finance", icon: Receipt },
   { to: "/inventory", label: "Inventory", icon: Boxes },
-  { to: "/pos", label: "POS & Restaurant", icon: UtensilsCrossed },
   { to: "/procurement", label: "Procurement", icon: ShoppingCart },
   { to: "/maintenance", label: "Maintenance", icon: Wrench },
   { to: "/crm", label: "CRM & Loyalty", icon: Users },
