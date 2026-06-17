@@ -150,11 +150,12 @@ export default function AppShell() {
 
       <div className="flex-1 ml-[260px] flex flex-col min-w-0">
         <header className="h-16 sticky top-0 z-30 bg-card/80 backdrop-blur border-b flex items-center gap-3 px-6">
+          {/* Left — property selector */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-2">
+              <Button variant="outline" size="sm" className="gap-2 shrink-0">
                 <Building2 className="size-4" />
-                <span className="font-medium">{current?.name}</span>
+                <span className="font-medium hidden sm:inline">{current?.name}</span>
                 <ChevronDown className="size-3.5 opacity-60" />
               </Button>
             </DropdownMenuTrigger>
@@ -178,58 +179,106 @@ export default function AppShell() {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          <div className="relative flex-1 max-w-md">
+
+          {/* Centre — search */}
+          <div className="relative flex-1 max-w-sm">
             <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search guests, reservations, rooms…"
               className="pl-9 h-9 bg-background"
             />
           </div>
-          <Button variant="ghost" size="icon" className="relative">
-            <Bell className="size-5" />
-            <Badge className="absolute -top-1 -right-1 size-4 p-0 grid place-items-center text-[10px]">
-              3
-            </Badge>
-          </Button>
-          {authedUser ? (
+
+          {/* Right — notifications + profile pushed to far right */}
+          <div className="ml-auto flex items-center gap-1 border-l pl-4">
+            {/* Notification bell */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-2">
-                  <Avatar className="size-9">
-                    <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
-                      {initials}
-                    </AvatarFallback>
-                  </Avatar>
-                </button>
+                <Button variant="ghost" size="icon" className="relative size-9">
+                  <Bell className="size-[18px]" />
+                  <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-destructive ring-2 ring-card" />
+                </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel className="max-w-[200px] truncate">
-                  {displayName}
+              <DropdownMenuContent align="end" className="w-80">
+                <DropdownMenuLabel className="flex items-center justify-between">
+                  Notifications
+                  <Badge variant="secondary" className="text-[10px]">3 new</Badge>
                 </DropdownMenuLabel>
-                <DropdownMenuItem>Profile</DropdownMenuItem>
-                <DropdownMenuItem>Preferences</DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={async () => {
-                    await signOut();
-                    toast.success("Signed out");
-                    navigate({ to: "/login" });
-                  }}
-                >
-                  Sign out
+                {[
+                  { icon: "🛎️", title: "Room 204 — Early check-in request", time: "2 min ago" },
+                  { icon: "⚠️", title: "Maintenance ticket #14 overdue", time: "18 min ago" },
+                  { icon: "💳", title: "Folio balance unsettled — Mr. Sharma", time: "1 hr ago" },
+                ].map((n) => (
+                  <DropdownMenuItem key={n.title} className="flex items-start gap-2.5 py-2.5">
+                    <span className="text-base mt-px">{n.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium leading-snug">{n.title}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{n.time}</p>
+                    </div>
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="justify-center text-xs text-muted-foreground">
+                  View all notifications
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={() => navigate({ to: "/login" })}
-            >
-              <LogIn className="size-4" /> Sign in
-            </Button>
-          )}
+
+            {/* Vertical divider */}
+            <div className="w-px h-6 bg-border mx-1" />
+
+            {/* Profile avatar */}
+            {authedUser ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-accent transition-colors">
+                    <Avatar className="size-8">
+                      <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
+                        {initials}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="hidden md:flex flex-col items-start leading-tight">
+                      <span className="text-xs font-semibold truncate max-w-[120px]">
+                        {(authedUser.email ?? "Guest").replace(/@.*/, "")}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">Admin</span>
+                    </div>
+                    <ChevronDown className="size-3.5 opacity-50 hidden md:block" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuLabel className="flex flex-col gap-0.5">
+                    <span className="font-medium">{(authedUser.email ?? "Guest").replace(/@.*/, "")}</span>
+                    <span className="text-xs text-muted-foreground font-normal truncate">{authedUser.email}</span>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem>Profile</DropdownMenuItem>
+                  <DropdownMenuItem>Preferences</DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={async () => {
+                      await signOut();
+                      toast.success("Signed out");
+                      navigate({ to: "/login" });
+                    }}
+                  >
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => navigate({ to: "/login" })}
+              >
+                <LogIn className="size-4" /> Sign in
+              </Button>
+            )}
+          </div>
         </header>
         <main className="flex-1 p-6">
           <Outlet />
