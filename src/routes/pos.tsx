@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
-import type { POSOrder, Outlet, MenuItem } from "@/lib/mhms-store";
+import type { POSOrder, Outlet, MenuItem, OrderChannel } from "@/lib/mhms-store";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   BarChart, Bar, AreaChart, Area, PieChart, Pie, Cell,
   XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, Legend,
@@ -20,12 +20,33 @@ import {
   Smartphone, BedDouble, Clock, CheckCircle2, ReceiptText,
   UtensilsCrossed, Wine, Sparkles, ShoppingBag, X, Timer,
   AlertCircle, Printer, TrendingUp, LayoutGrid, Download,
+  Truck, Building2, Package, Tag, Wallet, CalendarDays,
+  MapPin, Phone, Bike, Star, Zap, Users, DollarSign,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { printHTML } from "@/lib/csv";
 
-// ── Static outlet data ─────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
+type CartItem = { id: string; name: string; qty: number; price: number; note?: string };
+type PayMethod = typeof PAY_METHODS[number]["id"];
+type TableStatus = "available" | "occupied" | "reserved" | "cleaning";
+type KitchenStation = "All" | "Tandoor" | "Grill" | "Fry" | "Pantry" | "Bar" | "Dessert";
+type Promotion = { id: string; name: string; type: "happy_hour" | "bogo" | "flat" | "combo"; desc: string; discountPct: number; condition?: string };
+type BanquetEvent = {
+  id: string; name: string; date: string; time: string; hall: string;
+  covers: number; contactName: string; phone: string; package: string;
+  advance: number; total: number;
+  status: "Tentative" | "Confirmed" | "In Progress" | "Completed" | "Cancelled";
+};
+type CashierShift = {
+  id: string; cashierName: string; openedAt: string; openingFloat: number;
+  closedAt?: string; closingCash?: number; cashSales: number; cardSales: number;
+  upiSales: number; roomChargeSales: number; status: "Open" | "Closed";
+};
+
+// ── Static data ────────────────────────────────────────────────────────────────
+const OUTLETS_LIST: Outlet[] = ["Restaurant", "Bar", "Room Service", "Spa"];
 
 const OUTLET_TABLES: Record<Outlet, string[]> = {
   Restaurant:     ["T-01","T-02","T-03","T-04","T-05","T-06","T-07","T-08","T-09","T-10","T-11","T-12"],
@@ -56,6 +77,13 @@ const PAY_METHODS = [
 
 const PIE_COLORS = ["hsl(var(--chart-1))","hsl(var(--chart-2))","hsl(var(--chart-3))","hsl(var(--chart-4))"];
 
+const CHANNELS: { id: OrderChannel; label: string; icon: React.ElementType }[] = [
+  { id: "Dine-In",  label: "Dine-In",  icon: UtensilsCrossed },
+  { id: "Takeaway", label: "Takeaway", icon: Package },
+  { id: "Delivery", label: "Delivery", icon: Truck },
+  { id: "Banquet",  label: "Banquet",  icon: Building2 },
+];
+
 const WAITERS = [
   { id: "w1", name: "Arjun Mehta" },
   { id: "w2", name: "Sona Patel" },
@@ -64,50 +92,116 @@ const WAITERS = [
   { id: "w5", name: "Karan Singh" },
 ];
 
-const INITIAL_TABLE_RES = [
-  { id: "tr1", date: "2026-06-17", time: "19:30", table: "T-04", guests: 4, name: "Mr. Sharma", phone: "9876543210", status: "Confirmed" },
-  { id: "tr2", date: "2026-06-17", time: "20:00", table: "T-08", guests: 2, name: "Ms. Kapoor", phone: "9123456789", status: "Confirmed" },
-  { id: "tr3", date: "2026-06-18", time: "13:00", table: "T-02", guests: 6, name: "Singh Family", phone: "9988776655", status: "Pending" },
-  { id: "tr4", date: "2026-06-18", time: "19:00", table: "T-06", guests: 4, name: "Mr. Verma", phone: "9012345678", status: "Confirmed" },
+const RIDERS = [
+  { id: "rd1", name: "Suresh Kumar",  phone: "9876500001", available: true },
+  { id: "rd2", name: "Amit Yadav",    phone: "9876500002", available: false },
+  { id: "rd3", name: "Ravi Sharma",   phone: "9876500003", available: true },
+  { id: "rd4", name: "Dev Thakur",    phone: "9876500004", available: true },
 ];
 
-type CartItem = { id: string; name: string; qty: number; price: number; note?: string };
-type PayMethod = typeof PAY_METHODS[number]["id"];
-type TableStatus = "available" | "occupied" | "reserved" | "cleaning";
+const KITCHEN_STATIONS: KitchenStation[] = ["All", "Tandoor", "Grill", "Fry", "Pantry", "Bar", "Dessert"];
 
-const TABLE_STATUS_META: Record<TableStatus, { label: string; color: string; bg: string }> = {
-  available: { label: "Available", color: "text-success", bg: "bg-success/15 border-success/30 hover:border-success/60" },
-  occupied:  { label: "Occupied",  color: "text-destructive", bg: "bg-destructive/10 border-destructive/30 hover:border-destructive/50" },
-  reserved:  { label: "Reserved",  color: "text-info", bg: "bg-info/10 border-info/30 hover:border-info/50" },
-  cleaning:  { label: "Cleaning",  color: "text-warning-foreground", bg: "bg-warning/15 border-warning/30 hover:border-warning/50" },
+const CAT_TO_STATION: Record<string, KitchenStation> = {
+  Starter: "Fry", Main: "Grill", Bread: "Tandoor",
+  Salad: "Pantry", Snack: "Pantry", Beverage: "Pantry",
+  Dessert: "Dessert", Breakfast: "Pantry",
+  Cocktail: "Bar", Mocktail: "Bar", Beer: "Bar", Spirit: "Bar", Wine: "Bar",
+  Massage: "Pantry", Facial: "Pantry", Nails: "Pantry", Package: "Pantry",
 };
 
-// ── KOT Receipt modal ─────────────────────────────────────────────────────────
-function KOTModal({ order, onClose }: { order: { outlet: string; table?: string; items: CartItem[] }; onClose: () => void }) {
+const PROMOTIONS: Promotion[] = [
+  { id: "promo1", name: "Happy Hours",     type: "happy_hour", desc: "20% off Bar — 5 PM to 8 PM",      discountPct: 20, condition: "Bar outlet" },
+  { id: "promo2", name: "BOGO Starters",   type: "bogo",       desc: "Buy 1 Get 1 on all Starters",     discountPct: 50, condition: "Starter items" },
+  { id: "promo3", name: "Corporate 15%",   type: "flat",       desc: "15% off for corporate bookings",  discountPct: 15 },
+  { id: "promo4", name: "Weekend Special", type: "flat",       desc: "10% weekend dining discount",     discountPct: 10, condition: "Sat & Sun" },
+];
+
+const BANQUET_HALLS = ["Grand Ballroom", "Crystal Hall", "Garden Terrace", "Conference Room"];
+
+const INITIAL_TABLE_RES = [
+  { id: "tr1", date: "2026-06-18", time: "19:30", table: "T-04", guests: 4, name: "Mr. Sharma",   phone: "9876543210", status: "Confirmed" },
+  { id: "tr2", date: "2026-06-18", time: "20:00", table: "T-08", guests: 2, name: "Ms. Kapoor",   phone: "9123456789", status: "Confirmed" },
+  { id: "tr3", date: "2026-06-19", time: "13:00", table: "T-02", guests: 6, name: "Singh Family", phone: "9988776655", status: "Pending" },
+  { id: "tr4", date: "2026-06-19", time: "19:00", table: "T-06", guests: 4, name: "Mr. Verma",    phone: "9012345678", status: "Confirmed" },
+];
+
+const INITIAL_BANQUET_EVENTS: BanquetEvent[] = [
+  { id: "be1", name: "Singh Wedding Reception", date: "2026-06-25", time: "18:00", hall: "Grand Ballroom", covers: 180, contactName: "Rajiv Singh",  phone: "9876501234", package: "Royal Banquet",     advance: 100000, total: 385000, status: "Confirmed" },
+  { id: "be2", name: "TechCorp Annual Dinner",  date: "2026-06-28", time: "19:00", hall: "Crystal Hall",   covers:  60, contactName: "Ms. Mehta",    phone: "9812345678", package: "Corporate Package", advance:  50000, total:  95000, status: "Confirmed" },
+  { id: "be3", name: "Birthday — Aryan K.",     date: "2026-06-22", time: "20:00", hall: "Garden Terrace", covers:  30, contactName: "Priya Kapoor", phone: "9988001122", package: "Birthday Special",  advance:  15000, total:  42000, status: "Tentative" },
+  { id: "be4", name: "Gupta Family Reunion",    date: "2026-07-04", time: "13:00", hall: "Crystal Hall",   covers:  45, contactName: "Mr. Gupta",    phone: "9123456789", package: "Family Lunch",      advance:  20000, total:  68000, status: "Tentative" },
+];
+
+const INITIAL_CASHIER_SHIFTS: CashierShift[] = [
+  { id: "sh1", cashierName: "Priya Rao", openedAt: "17 Jun 2026, 07:00 AM", openingFloat: 5000, closedAt: "17 Jun 2026, 11:00 PM", closingCash: 18500, cashSales: 14200, cardSales: 28600, upiSales: 12400, roomChargeSales: 8800, status: "Closed" },
+];
+
+const BLANK_BANQUET = { name: "", date: "", time: "", hall: "Grand Ballroom", covers: "50", contactName: "", phone: "", package: "", advance: "", total: "" };
+
+const TABLE_STATUS_META: Record<TableStatus, { label: string; color: string; bg: string }> = {
+  available: { label: "Available", color: "text-success",             bg: "bg-success/15 border-success/30 hover:border-success/60" },
+  occupied:  { label: "Occupied",  color: "text-destructive",         bg: "bg-destructive/10 border-destructive/30 hover:border-destructive/50" },
+  reserved:  { label: "Reserved",  color: "text-info",                bg: "bg-info/10 border-info/30 hover:border-info/50" },
+  cleaning:  { label: "Cleaning",  color: "text-warning-foreground",  bg: "bg-warning/15 border-warning/30 hover:border-warning/50" },
+};
+
+const BANQUET_STATUS_META: Record<BanquetEvent["status"], { color: string }> = {
+  Tentative:    { color: "bg-warning/20 text-warning-foreground border-warning/30" },
+  Confirmed:    { color: "bg-success/15 text-success border-success/30" },
+  "In Progress":{ color: "bg-info/15 text-info border-info/30" },
+  Completed:    { color: "bg-muted text-muted-foreground border-border" },
+  Cancelled:    { color: "bg-destructive/10 text-destructive border-destructive/30" },
+};
+
+// ── KOT Receipt modal ──────────────────────────────────────────────────────────
+function KOTModal({ order, onClose }: { order: { outlet: string; table?: string; channel?: string; items: CartItem[] }; onClose: () => void }) {
+  const printKOT = () => {
+    const rows = order.items.map((i) => `<tr><td>${i.qty}×</td><td>${i.name}${i.note ? `<br/><small style="color:#64748b">↳ ${i.note}</small>` : ""}</td></tr>`).join("");
+    printHTML(`KOT — ${order.outlet}`, `
+      <div style="font-family:monospace">
+        <div style="text-align:center;font-size:18px;font-weight:bold;margin-bottom:8px">${order.outlet.toUpperCase()}</div>
+        <div style="text-align:center;color:#64748b;margin-bottom:12px">${order.channel ? `[${order.channel}] ` : ""}${order.table ?? "—"} · ${new Date().toLocaleTimeString()}</div>
+        <hr/>
+        <table style="width:100%;margin-top:8px">${rows}</table>
+        <hr style="margin-top:12px"/>
+        <div style="text-align:center;color:#94a3b8;font-size:11px;margin-top:8px">KOT — Hotel Harmony</div>
+      </div>
+    `);
+  };
   return (
     <DialogContent className="max-w-xs">
       <DialogHeader><DialogTitle>Kitchen Order Ticket</DialogTitle></DialogHeader>
       <div className="font-mono text-sm space-y-1 p-4 bg-muted rounded-lg">
         <div className="text-center font-bold text-base">{order.outlet.toUpperCase()}</div>
-        <div className="text-center text-muted-foreground text-xs">{order.table ?? "—"} · {new Date().toLocaleTimeString()}</div>
+        <div className="text-center text-muted-foreground text-xs">
+          {order.channel && order.channel !== "Dine-In" && <span className="mr-1.5 font-medium text-primary">[{order.channel}]</span>}
+          {order.table ?? "—"} · {new Date().toLocaleTimeString()}
+        </div>
         <Separator className="my-2" />
-        {order.items.map((i) => (
-          <div key={i.id}>
-            <div className="flex justify-between">
-              <span>{i.qty}× {i.name}</span>
+        {order.items.length === 0 ? (
+          <div className="text-center text-muted-foreground text-xs py-2">No items</div>
+        ) : (
+          order.items.map((i, idx) => (
+            <div key={idx}>
+              <div className="flex justify-between">
+                <span>{i.qty}× {i.name}</span>
+              </div>
+              {i.note && <div className="text-muted-foreground text-xs pl-4">↳ {i.note}</div>}
             </div>
-            {i.note && <div className="text-muted-foreground text-xs pl-4">↳ {i.note}</div>}
-          </div>
-        ))}
+          ))
+        )}
         <Separator className="my-2" />
         <div className="text-center text-xs text-muted-foreground">KOT — Hotel Harmony</div>
       </div>
-      <Button onClick={onClose} className="w-full">Close</Button>
+      <div className="flex gap-2">
+        <Button variant="outline" className="flex-1 gap-1" onClick={printKOT}><Printer className="size-4" />Print</Button>
+        <Button className="flex-1" onClick={onClose}>Close</Button>
+      </div>
     </DialogContent>
   );
 }
 
-// ── Receipt modal ─────────────────────────────────────────────────────────────
+// ── Receipt modal ──────────────────────────────────────────────────────────────
 function ReceiptModal({ order, onClose }: { order: POSOrder; onClose: () => void }) {
   const printReceipt = () => {
     const rows = order.items.map((i) => `<tr><td>${i.qty}× ${i.name}</td><td class="right">${fmtINR(i.qty * i.price)}</td></tr>`).join("");
@@ -115,7 +209,7 @@ function ReceiptModal({ order, onClose }: { order: POSOrder; onClose: () => void
     const base = order.total - tax;
     printHTML(`Receipt — ${order.outlet}`, `
       <div class="brand"><div><h1>Hotel Harmony</h1><div class="muted">GST: 27AABCA1234X1Z5</div></div><div style="text-align:right"><h1>RECEIPT</h1><div class="muted">${order.createdAt}</div></div></div>
-      <div><strong>Outlet:</strong> ${order.outlet} &nbsp;&nbsp; <strong>Table:</strong> ${order.table ?? "Room Svc"}</div>
+      <div><strong>Outlet:</strong> ${order.outlet} &nbsp;&nbsp; <strong>${order.channel === "Delivery" ? "Deliver to" : "Table"}:</strong> ${order.deliveryAddress ?? order.table ?? "Room Svc"}</div>
       <table style="margin-top:12px"><tr><th>Item</th><th class="right">Amount</th></tr>${rows}</table>
       <div class="totals">
         <div class="row"><span>Subtotal</span><span>${fmtINR(base)}</span></div>
@@ -130,7 +224,9 @@ function ReceiptModal({ order, onClose }: { order: POSOrder; onClose: () => void
     <DialogContent className="max-w-xs">
       <DialogHeader><DialogTitle>Bill — {order.outlet}</DialogTitle></DialogHeader>
       <div className="font-mono text-sm space-y-1">
-        <div className="text-xs text-muted-foreground text-center mb-2">{order.table ?? "Room Service"}</div>
+        <div className="text-xs text-muted-foreground text-center mb-2">
+          {order.channel === "Delivery" ? `Delivery → ${order.customerName}` : (order.table ?? "Room Service")}
+        </div>
         {order.items.map((i) => (
           <div key={i.name} className="flex justify-between">
             <span>{i.qty}× {i.name}</span>
@@ -159,12 +255,13 @@ export const Route = createFileRoute("/pos")({
   component: POS,
 });
 
-// ── Main POS Component ────────────────────────────────────────────────────────
+// ── Main POS Component ─────────────────────────────────────────────────────────
 function POS() {
   const { orders, addOrder, updateOrder, rooms, menuItems: allMenuItems } = useMHMS();
 
-  // New order state
+  // ── Order state ──
   const [outlet, setOutlet] = useState<Outlet>("Restaurant");
+  const [channel, setChannel] = useState<OrderChannel>("Dine-In");
   const [catFilter, setCatFilter] = useState("All");
   const [search, setSearch] = useState("");
   const [table, setTable] = useState("T-01");
@@ -174,27 +271,34 @@ function POS() {
   const [taxEnabled, setTaxEnabled] = useState(true);
   const [payMethod, setPayMethod] = useState<PayMethod>("Cash");
   const [orderNotes, setOrderNotes] = useState("");
+  const [waiter, setWaiter] = useState(WAITERS[0].id);
+
+  // ── Channel-specific fields ──
+  const [customerName, setCustomerName] = useState("");
+  const [deliveryPhone, setDeliveryPhone] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryRiderId, setDeliveryRiderId] = useState(RIDERS[0].id);
+  const [banquetEventRef, setBanquetEventRef] = useState("be1");
+
+  // ── UI dialogs ──
   const [kotModal, setKotModal] = useState(false);
+  const [kotItems, setKotItems] = useState<CartItem[]>([]);
+  const [kotContext, setKotContext] = useState<{ outlet: string; table?: string; channel?: string }>({ outlet: "Restaurant" });
   const [noteItemId, setNoteItemId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [receiptOrder, setReceiptOrder] = useState<POSOrder | null>(null);
   const [historySearch, setHistorySearch] = useState("");
-  const [waiter, setWaiter] = useState(WAITERS[0].id);
   const [splitMode, setSplitMode] = useState(false);
   const [split1, setSplit1] = useState("");
   const [split2, setSplit2] = useState("");
   const [payMethod2, setPayMethod2] = useState<PayMethod>("Card");
   const [voidId, setVoidId] = useState<string | null>(null);
   const [voidReason, setVoidReason] = useState("");
-  const [tableResOpen, setTableResOpen] = useState(false);
-  const [tableReservations, setTableReservations] = useState(INITIAL_TABLE_RES);
-  const [newTR, setNewTR] = useState({ date: "", time: "", table: "T-01", guests: "2", name: "", phone: "" });
 
-  // Table management state
+  // ── Table management ──
   const [tableStatuses, setTableStatuses] = useState<Record<string, TableStatus>>(() => {
     const init: Record<string, TableStatus> = {};
     ALL_TABLES.forEach((t) => { init[t.id] = "available"; });
-    // seed a couple occupied/reserved
     init["T-03"] = "occupied"; init["T-07"] = "occupied"; init["T-05"] = "reserved";
     init["B-02"] = "occupied"; init["S-01"] = "occupied";
     return init;
@@ -202,7 +306,32 @@ function POS() {
   const [tableCovers, setTableCovers] = useState<Record<string, number>>({});
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
 
-  // Derived — menu comes from store, filtered to current outlet & active items
+  // ── Reservations ──
+  const [tableResOpen, setTableResOpen] = useState(false);
+  const [tableReservations, setTableReservations] = useState(INITIAL_TABLE_RES);
+  const [newTR, setNewTR] = useState({ date: "", time: "", table: "T-01", guests: "2", name: "", phone: "" });
+
+  // ── Kitchen stations ──
+  const [kdsStation, setKdsStation] = useState<KitchenStation>("All");
+
+  // ── Promotions ──
+  const [activePromoId, setActivePromoId] = useState<string | null>(null);
+
+  // ── Delivery rider assignment ──
+  const [riderAssignments, setRiderAssignments] = useState<Record<string, string>>({});
+
+  // ── Banquet ──
+  const [banquetEvents, setBanquetEvents] = useState<BanquetEvent[]>(INITIAL_BANQUET_EVENTS);
+  const [banquetDialogOpen, setBanquetDialogOpen] = useState(false);
+  const [newBanquet, setNewBanquet] = useState({ ...BLANK_BANQUET });
+
+  // ── Cashier shift ──
+  const [cashierShifts, setCashierShifts] = useState<CashierShift[]>(INITIAL_CASHIER_SHIFTS);
+  const [shiftFloat, setShiftFloat] = useState("5000");
+  const [shiftName, setShiftName] = useState("Admin");
+  const [closingCash, setClosingCash] = useState("");
+
+  // ── Derived ──
   const outletMenu = useMemo(() => allMenuItems.filter((m) => m.outlet === outlet && m.active), [allMenuItems, outlet]);
   const categories = useMemo(() => ["All", ...Array.from(new Set(outletMenu.map((m) => m.cat)))], [outletMenu]);
   const filteredMenu = useMemo(() => outletMenu.filter((m) => {
@@ -210,6 +339,12 @@ function POS() {
     const matchSearch = m.name.toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
   }), [outletMenu, catFilter, search]);
+
+  const getItemStation = (itemName: string): KitchenStation => {
+    const mi = allMenuItems.find((m) => m.name === itemName);
+    if (!mi) return "Pantry";
+    return (CAT_TO_STATION[mi.cat] ?? "Pantry") as KitchenStation;
+  };
 
   const subtotal = cart.reduce((s, i) => s + i.qty * i.price, 0);
   const discountAmt = Math.round(subtotal * discountPct / 100);
@@ -219,10 +354,18 @@ function POS() {
 
   const openOrders = orders.filter((o) => o.status !== "Paid");
   const paidOrders = orders.filter((o) => o.status === "Paid");
+  const deliveryOrders = useMemo(() => orders.filter((o) => o.channel === "Delivery"), [orders]);
   const todayRevenue = paidOrders.reduce((s, o) => s + o.total, 0);
   const totalCovers = Object.values(tableCovers).reduce((s, c) => s + c, 0);
+  const currentShift = cashierShifts.find((s) => s.status === "Open");
 
-  // Analytics data
+  const filteredKOT = useMemo(() => {
+    const sent = openOrders.filter((o) => o.status === "Sent");
+    if (kdsStation === "All") return sent;
+    return sent.filter((o) => o.items.some((i) => getItemStation(i.name) === kdsStation));
+  }, [openOrders, kdsStation, allMenuItems]);
+
+  // ── Analytics ──
   const revenueByOutlet = useMemo(() => {
     const g: Record<string, number> = {};
     paidOrders.forEach((o) => { g[o.outlet] = (g[o.outlet] ?? 0) + o.total; });
@@ -252,30 +395,40 @@ function POS() {
     }));
   }, []);
 
-  // Cart helpers
+  // ── Cart helpers ──
   const addToCart = (m: MenuItem) =>
     setCart((prev) => {
       const ex = prev.find((c) => c.id === m.id);
       return ex ? prev.map((c) => c.id === m.id ? { ...c, qty: c.qty + 1 } : c) : [...prev, { id: m.id, name: m.name, qty: 1, price: m.price }];
     });
-
   const updateQty = (id: string, delta: number) =>
     setCart((prev) => prev.map((c) => c.id === id ? { ...c, qty: c.qty + delta } : c).filter((c) => c.qty > 0));
-
   const removeFromCart = (id: string) => setCart((prev) => prev.filter((c) => c.id !== id));
   const cartCount = (id: string) => cart.find((c) => c.id === id)?.qty ?? 0;
 
-  const resetOrder = () => { setCart([]); setDiscountPct(0); setOrderNotes(""); setPayMethod("Cash"); };
+  const resetOrder = () => {
+    setCart([]); setDiscountPct(0); setOrderNotes(""); setPayMethod("Cash");
+    setCustomerName(""); setDeliveryPhone(""); setDeliveryAddress("");
+    setActivePromoId(null); setSplitMode(false); setSplit1(""); setSplit2("");
+  };
 
-  const buildPayload = (status: POSOrder["status"]) => ({
-    outlet, table: outlet === "Room Service" ? undefined : table,
-    roomId: outlet === "Room Service" ? roomId : undefined, items: cart, status, total,
+  const buildPayload = (status: POSOrder["status"]): Omit<POSOrder, "id" | "orderNumber" | "createdAt"> => ({
+    outlet,
+    channel: outlet === "Room Service" ? undefined : channel,
+    table: channel === "Dine-In" && outlet !== "Room Service" ? table : channel === "Takeaway" ? (customerName || "Walk-in") : undefined,
+    customerName: channel === "Takeaway" ? customerName || undefined : channel === "Delivery" ? customerName || undefined : undefined,
+    deliveryAddress: channel === "Delivery" ? deliveryAddress || undefined : undefined,
+    roomId: outlet === "Room Service" ? roomId : undefined,
+    items: cart, status, total,
   });
 
   const handleSendKOT = () => {
     if (!cart.length) return;
+    const snap = [...cart];
     addOrder(buildPayload("Sent"));
-    if (outlet !== "Room Service") setTableStatuses((p) => ({ ...p, [table]: "occupied" }));
+    if (channel === "Dine-In" && outlet !== "Room Service") setTableStatuses((p) => ({ ...p, [table]: "occupied" }));
+    setKotItems(snap);
+    setKotContext({ outlet, table: outlet !== "Room Service" ? table : undefined, channel: channel !== "Dine-In" ? channel : undefined });
     setKotModal(true);
     resetOrder();
   };
@@ -289,21 +442,59 @@ function POS() {
 
   const switchOutlet = (o: Outlet) => {
     setOutlet(o); setCatFilter("All"); setSearch("");
+    if (o === "Room Service") { setChannel("Dine-In"); return; }
     const tables = OUTLET_TABLES[o];
     if (tables.length) setTable(tables[0]);
     else setTable("");
   };
 
+  const togglePromo = (promoId: string) => {
+    const promo = PROMOTIONS.find((p) => p.id === promoId);
+    if (!promo) return;
+    if (activePromoId === promoId) {
+      setActivePromoId(null);
+      setDiscountPct(0);
+    } else {
+      setActivePromoId(promoId);
+      setDiscountPct(promo.discountPct);
+      toast.success(`${promo.name} applied — ${promo.discountPct}% off`);
+    }
+  };
+
+  const openShift = () => {
+    const f = Number(shiftFloat);
+    if (!f || f < 0) { toast.error("Enter a valid opening float"); return; }
+    const newShift: CashierShift = {
+      id: `sh${Date.now()}`, cashierName: shiftName || "Admin",
+      openedAt: new Date().toLocaleString("en-IN"),
+      openingFloat: f, cashSales: 0, cardSales: 0, upiSales: 0, roomChargeSales: 0, status: "Open",
+    };
+    setCashierShifts((p) => [newShift, ...p]);
+    toast.success(`Shift opened — float ${fmtINR(f)}`);
+  };
+
+  const closeShift = (shiftId: string) => {
+    const cc = Number(closingCash);
+    if (!closingCash || isNaN(cc)) { toast.error("Enter closing cash count"); return; }
+    const shift = cashierShifts.find((s) => s.id === shiftId);
+    if (!shift) return;
+    const cashSales = paidOrders.filter((o) => o.total > 0).length * 850; // simplified
+    setCashierShifts((p) => p.map((s) => s.id === shiftId ? { ...s, status: "Closed", closedAt: new Date().toLocaleString("en-IN"), closingCash: cc, cashSales } : s));
+    toast.success("Shift closed successfully");
+    setClosingCash("");
+  };
+
+  // ── Render ──
   return (
     <>
       <PageHeader title="POS & Restaurant" description="Orders, kitchen display, table management and analytics" />
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
-        <Stat label="Today's Revenue" value={fmtINR(todayRevenue)} tone="success" hint="Paid orders" />
-        <Stat label="Open Orders" value={openOrders.length} tone={openOrders.length > 3 ? "warning" : "info"} hint="In kitchen / open" />
-        <Stat label="Avg Ticket" value={fmtINR(Math.round(todayRevenue / Math.max(paidOrders.length, 1)))} hint="Per paid order" />
-        <Stat label="Active Tables" value={Object.values(tableStatuses).filter((s) => s === "occupied").length} hint="Currently occupied" />
-        <Stat label="Covers Today" value={totalCovers || "—"} hint="Guests served" />
+        <Stat label="Today's Revenue"  value={fmtINR(todayRevenue)} tone="success" hint="Paid orders" />
+        <Stat label="Open Orders"      value={openOrders.length} tone={openOrders.length > 3 ? "warning" : "info"} hint="In kitchen / open" />
+        <Stat label="Avg Ticket"       value={fmtINR(Math.round(todayRevenue / Math.max(paidOrders.length, 1)))} hint="Per paid order" />
+        <Stat label="Active Tables"    value={Object.values(tableStatuses).filter((s) => s === "occupied").length} hint="Currently occupied" />
+        <Stat label="Delivery Orders"  value={deliveryOrders.filter((o) => o.status !== "Paid").length} hint="Pending deliveries" tone={deliveryOrders.filter((o) => o.status !== "Paid").length > 0 ? "warning" : "info"} />
       </div>
 
       <Tabs defaultValue="new">
@@ -312,32 +503,31 @@ function POS() {
           <TabsTrigger value="tables"><LayoutGrid className="size-3.5 mr-1.5" />Tables</TabsTrigger>
           <TabsTrigger value="kitchen">
             <ChefHat className="size-3.5 mr-1.5" />Kitchen
-            {openOrders.filter((o) => o.status === "Sent").length > 0 && (
-              <Badge variant="destructive" className="ml-1.5 size-4 p-0 grid place-items-center text-[10px]">
-                {openOrders.filter((o) => o.status === "Sent").length}
-              </Badge>
-            )}
+            {filteredKOT.length > 0 && <Badge variant="destructive" className="ml-1.5 size-4 p-0 grid place-items-center text-[10px]">{filteredKOT.length}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="live">
             <Clock className="size-3.5 mr-1.5" />Live Orders
-            {openOrders.length > 0 && (
-              <Badge variant="destructive" className="ml-1.5 size-4 p-0 grid place-items-center text-[10px]">
-                {openOrders.length}
-              </Badge>
-            )}
+            {openOrders.length > 0 && <Badge variant="destructive" className="ml-1.5 size-4 p-0 grid place-items-center text-[10px]">{openOrders.length}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="delivery">
+            <Truck className="size-3.5 mr-1.5" />Delivery
+            {deliveryOrders.filter((o) => o.status !== "Paid").length > 0 && <Badge variant="destructive" className="ml-1.5 size-4 p-0 grid place-items-center text-[10px]">{deliveryOrders.filter((o) => o.status !== "Paid").length}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="history"><ReceiptText className="size-3.5 mr-1.5" />History</TabsTrigger>
           <TabsTrigger value="analytics"><TrendingUp className="size-3.5 mr-1.5" />Analytics</TabsTrigger>
           <TabsTrigger value="reservations">Reservations</TabsTrigger>
+          <TabsTrigger value="banquet"><Building2 className="size-3.5 mr-1.5" />Banquet</TabsTrigger>
+          <TabsTrigger value="cashier"><Wallet className="size-3.5 mr-1.5" />Cashier</TabsTrigger>
         </TabsList>
 
-        {/* ── NEW ORDER ──────────────────────────────────────────────────────── */}
+        {/* ── NEW ORDER ─────────────────────────────────────────────────────── */}
         <TabsContent value="new">
           <div className="grid grid-cols-12 gap-4">
             {/* Left — menu panel */}
             <div className="col-span-12 lg:col-span-8 space-y-3">
+              {/* Outlet selector */}
               <div className="flex gap-2 flex-wrap">
-                {(Object.keys(MENU) as Outlet[]).map((o) => (
+                {OUTLETS_LIST.map((o) => (
                   <button key={o} onClick={() => switchOutlet(o)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition ${outlet === o ? "bg-primary text-primary-foreground border-primary" : "border-border hover:border-primary/40 hover:bg-accent/5"}`}>
                     {OUTLET_ICON[o]} {o}
@@ -345,6 +535,23 @@ function POS() {
                 ))}
               </div>
 
+              {/* Order Channel selector (not for Room Service) */}
+              {outlet !== "Room Service" && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs text-muted-foreground font-medium mr-1">Channel:</span>
+                  {CHANNELS.map((ch) => {
+                    const Icon = ch.icon;
+                    return (
+                      <button key={ch.id} onClick={() => setChannel(ch.id)}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition ${channel === ch.id ? "bg-secondary text-secondary-foreground border-secondary" : "border-border hover:border-primary/40"}`}>
+                        <Icon className="size-3" /> {ch.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Search + category filter */}
               <div className="flex gap-2 items-center flex-wrap">
                 <div className="relative">
                   <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -387,16 +594,72 @@ function POS() {
             {/* Right — order ticket */}
             <Card className="col-span-12 lg:col-span-4 p-4 flex flex-col gap-3">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-semibold">{OUTLET_ICON[outlet]}<span>{outlet}</span></div>
+                <div className="flex items-center gap-2 font-semibold">
+                  {OUTLET_ICON[outlet]}<span>{outlet}</span>
+                  {outlet !== "Room Service" && channel !== "Dine-In" && (
+                    <Badge variant="secondary" className="text-[10px] gap-1">
+                      {channel === "Delivery" && <Truck className="size-2.5" />}
+                      {channel === "Takeaway" && <Package className="size-2.5" />}
+                      {channel === "Banquet" && <Building2 className="size-2.5" />}
+                      {channel}
+                    </Badge>
+                  )}
+                </div>
                 {cart.length > 0 && <button onClick={resetOrder} className="text-xs text-muted-foreground hover:text-destructive transition">Clear all</button>}
               </div>
 
+              {/* Channel-specific location fields */}
               {outlet === "Room Service" ? (
                 <div className="space-y-1">
                   <Label className="text-xs">Room</Label>
                   <Select value={roomId} onValueChange={setRoomId}>
                     <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select room" /></SelectTrigger>
                     <SelectContent>{rooms.map((r) => <SelectItem key={r.id} value={r.id}>Room {r.number} — {r.type}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              ) : channel === "Delivery" ? (
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Customer Name</Label>
+                    <Input className="h-7 text-xs" placeholder="Full name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs flex items-center gap-1"><Phone className="size-3" />Phone</Label>
+                    <Input className="h-7 text-xs" placeholder="+91 …" value={deliveryPhone} onChange={(e) => setDeliveryPhone(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs flex items-center gap-1"><MapPin className="size-3" />Delivery Address</Label>
+                    <Input className="h-7 text-xs" placeholder="Full address" value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs flex items-center gap-1"><Bike className="size-3" />Assign Rider</Label>
+                    <Select value={deliveryRiderId} onValueChange={setDeliveryRiderId}>
+                      <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {RIDERS.map((r) => (
+                          <SelectItem key={r.id} value={r.id}>
+                            {r.name} {r.available ? "✓" : "• On delivery"}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              ) : channel === "Takeaway" ? (
+                <div className="space-y-1">
+                  <Label className="text-xs">Customer Name / Token</Label>
+                  <Input className="h-8 text-sm" placeholder="Walk-in or name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+                </div>
+              ) : channel === "Banquet" ? (
+                <div className="space-y-1">
+                  <Label className="text-xs">Banquet Event</Label>
+                  <Select value={banquetEventRef} onValueChange={setBanquetEventRef}>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {banquetEvents.filter((e) => e.status !== "Cancelled" && e.status !== "Completed").map((e) => (
+                        <SelectItem key={e.id} value={e.id}>{e.name} — {e.hall}</SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
                 </div>
               ) : (
@@ -414,6 +677,7 @@ function POS() {
                 </div>
               )}
 
+              {/* Server */}
               <div className="space-y-1">
                 <Label className="text-xs">Server</Label>
                 <Select value={waiter} onValueChange={setWaiter}>
@@ -424,7 +688,8 @@ function POS() {
 
               <Separator />
 
-              <div className="flex-1 min-h-[160px] max-h-[280px] overflow-y-auto space-y-2">
+              {/* Cart */}
+              <div className="flex-1 min-h-[120px] max-h-[240px] overflow-y-auto space-y-2">
                 {cart.length === 0 ? (
                   <div className="text-sm text-muted-foreground text-center py-8">Tap menu items to add</div>
                 ) : (
@@ -440,9 +705,7 @@ function POS() {
                           <button onClick={() => updateQty(c.id, -1)} className="size-6 rounded border flex items-center justify-center hover:bg-accent"><Minus className="size-3" /></button>
                           <span className="w-5 text-center font-medium">{c.qty}</span>
                           <button onClick={() => updateQty(c.id, +1)} className="size-6 rounded border flex items-center justify-center hover:bg-accent"><Plus className="size-3" /></button>
-                          <button onClick={() => { setNoteItemId(c.id); setNoteText(c.note ?? ""); }} className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-primary" title="Add note">
-                            <ReceiptText className="size-3" />
-                          </button>
+                          <button onClick={() => { setNoteItemId(c.id); setNoteText(c.note ?? ""); }} className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-primary" title="Add note"><ReceiptText className="size-3" /></button>
                           <button onClick={() => removeFromCart(c.id)} className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-destructive"><Trash2 className="size-3" /></button>
                         </div>
                       </div>
@@ -458,23 +721,41 @@ function POS() {
                     <Label className="text-xs">Order notes</Label>
                     <Input className="h-7 text-xs" placeholder="Allergies, special requests…" value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} />
                   </div>
+
+                  {/* Promotions */}
+                  <div>
+                    <Label className="text-xs flex items-center gap-1 mb-1.5"><Tag className="size-3" />Promotions</Label>
+                    <div className="space-y-1">
+                      {PROMOTIONS.map((promo) => (
+                        <button key={promo.id} onClick={() => togglePromo(promo.id)}
+                          className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md border text-xs transition ${activePromoId === promo.id ? "bg-success/10 border-success/40 text-success" : "hover:border-primary/30 text-muted-foreground hover:text-foreground"}`}>
+                          <span className="font-medium">{promo.name} {promo.condition && <span className="font-normal opacity-70">· {promo.condition}</span>}</span>
+                          <span className={`font-bold shrink-0 ml-2 ${activePromoId === promo.id ? "text-success" : "text-primary"}`}>{promo.discountPct}% off</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Discount + GST */}
                   <div className="flex items-center gap-2">
                     <Label className="text-xs shrink-0">Discount %</Label>
-                    <Input type="number" min={0} max={100} className="h-7 text-xs w-20" value={discountPct || ""} placeholder="0" onChange={(e) => setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value))))} />
+                    <Input type="number" min={0} max={100} className="h-7 text-xs w-20" value={discountPct || ""} placeholder="0" onChange={(e) => { setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value)))); setActivePromoId(null); }} />
                     <button onClick={() => setTaxEnabled((v) => !v)} className={`ml-auto text-xs px-2 py-1 rounded border transition ${taxEnabled ? "bg-primary/10 border-primary/40 text-primary" : "text-muted-foreground"}`}>GST 18%</button>
                   </div>
+
+                  {/* Totals */}
                   <div className="space-y-1 text-sm">
                     <div className="flex justify-between text-muted-foreground"><span>Subtotal</span><span>{fmtINR(subtotal)}</span></div>
-                    {discountAmt > 0 && <div className="flex justify-between text-success"><span>Discount ({discountPct}%)</span><span>−{fmtINR(discountAmt)}</span></div>}
+                    {discountAmt > 0 && <div className="flex justify-between text-success"><span>Discount ({discountPct}%){activePromoId && ` · ${PROMOTIONS.find(p => p.id === activePromoId)?.name}`}</span><span>−{fmtINR(discountAmt)}</span></div>}
                     {taxEnabled && <div className="flex justify-between text-muted-foreground"><span>CGST 9% + SGST 9%</span><span>{fmtINR(tax)}</span></div>}
                     <div className="flex justify-between font-semibold text-base pt-1 border-t"><span>Total</span><span>{fmtINR(total)}</span></div>
                   </div>
+
+                  {/* Payment */}
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <Label className="text-xs">Payment</Label>
-                      <button onClick={() => setSplitMode((v) => !v)} className={`text-[10px] px-1.5 py-0.5 rounded border transition ${splitMode ? "bg-primary/10 text-primary border-primary/40" : "text-muted-foreground hover:border-muted-foreground/40"}`}>
-                        Split
-                      </button>
+                      <button onClick={() => setSplitMode((v) => !v)} className={`text-[10px] px-1.5 py-0.5 rounded border transition ${splitMode ? "bg-primary/10 text-primary border-primary/40" : "text-muted-foreground hover:border-muted-foreground/40"}`}>Split</button>
                     </div>
                     {splitMode ? (
                       <div className="space-y-2">
@@ -507,6 +788,7 @@ function POS() {
                       </div>
                     )}
                   </div>
+
                   <div className="grid grid-cols-2 gap-2">
                     <Button variant="outline" onClick={handleSendKOT} className="gap-1.5"><ChefHat className="size-4" /> Send KOT</Button>
                     <Button onClick={handlePay} className="gap-1.5"><CreditCard className="size-4" /> Pay {fmtINR(total)}</Button>
@@ -517,7 +799,7 @@ function POS() {
           </div>
         </TabsContent>
 
-        {/* ── TABLE MANAGEMENT ────────────────────────────────────────────────── */}
+        {/* ── TABLE MANAGEMENT ──────────────────────────────────────────────── */}
         <TabsContent value="tables">
           <div className="flex gap-3 mb-3 flex-wrap text-xs">
             {(Object.entries(TABLE_STATUS_META) as [TableStatus, typeof TABLE_STATUS_META[TableStatus]][]).map(([s, m]) => (
@@ -549,7 +831,6 @@ function POS() {
               </div>
             </div>
           ))}
-
           {selectedTable && (
             <Card className="p-4 mt-2 border-primary/30 bg-primary/5">
               <div className="flex items-center justify-between mb-3">
@@ -566,25 +847,35 @@ function POS() {
                 <div className="flex items-center gap-2 ml-auto">
                   <Label className="text-xs">Covers</Label>
                   <Input type="number" min={0} max={20} className="h-7 w-16 text-xs"
-                    value={tableCovers[selectedTable] ?? ""}
-                    onChange={(e) => setTableCovers((p) => ({ ...p, [selectedTable!]: Number(e.target.value) }))}
-                    placeholder="0" />
+                    value={tableCovers[selectedTable] ?? ""} placeholder="0"
+                    onChange={(e) => setTableCovers((p) => ({ ...p, [selectedTable!]: Number(e.target.value) }))} />
                 </div>
               </div>
             </Card>
           )}
         </TabsContent>
 
-        {/* ── KITCHEN DISPLAY ────────────────────────────────────────────────── */}
+        {/* ── KITCHEN DISPLAY ───────────────────────────────────────────────── */}
         <TabsContent value="kitchen">
-          {openOrders.filter((o) => o.status === "Sent").length === 0 ? (
+          {/* Station filter */}
+          <div className="flex items-center gap-1.5 flex-wrap mb-3">
+            <span className="text-xs text-muted-foreground font-medium mr-1">Station:</span>
+            {KITCHEN_STATIONS.map((station) => (
+              <button key={station} onClick={() => setKdsStation(station)}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition ${kdsStation === station ? "bg-secondary text-secondary-foreground border-secondary" : "hover:border-muted-foreground/40"}`}>
+                {station}
+              </button>
+            ))}
+          </div>
+
+          {filteredKOT.length === 0 ? (
             <Card className="p-12 text-center text-muted-foreground">
               <CheckCircle2 className="size-10 mx-auto mb-3 opacity-30" />
-              <p>Kitchen is clear — no pending tickets.</p>
+              <p>{kdsStation === "All" ? "Kitchen is clear — no pending tickets." : `No orders pending at ${kdsStation} station.`}</p>
             </Card>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {openOrders.filter((o) => o.status === "Sent").map((o) => {
+              {filteredKOT.map((o) => {
                 const elapsedMins = Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 60000);
                 const urgency = elapsedMins >= 15 ? "destructive" : elapsedMins >= 8 ? "warning" : "success";
                 const urgencyClass = urgency === "destructive" ? "border-destructive bg-destructive/5 animate-pulse" : urgency === "warning" ? "border-warning bg-warning/5" : "border-success/40 bg-success/5";
@@ -595,26 +886,36 @@ function POS() {
                         <div className="flex items-center gap-1.5 font-bold text-base">
                           {OUTLET_ICON[o.outlet as Outlet]} {o.outlet}
                         </div>
-                        <div className="font-mono text-sm text-muted-foreground">{o.table ?? "Room Svc"}</div>
+                        <div className="font-mono text-sm text-muted-foreground flex items-center gap-1.5">
+                          {o.table ?? "Room Svc"}
+                          {o.channel && o.channel !== "Dine-In" && <Badge variant="outline" className="text-[9px] px-1">{o.channel}</Badge>}
+                        </div>
                       </div>
                       <div className={`flex items-center gap-1 text-sm font-semibold ${urgency === "destructive" ? "text-destructive" : urgency === "warning" ? "text-warning-foreground" : "text-success"}`}>
                         <Timer className="size-4" />{elapsedMins}m
                       </div>
                     </div>
-                    <div className="space-y-1 mb-3">
-                      {o.items.map((i) => (
-                        <div key={i.name} className="flex justify-between text-sm">
-                          <span className="font-medium">{i.qty}× {i.name}</span>
-                          {i.note && <span className="text-xs text-muted-foreground italic">{i.note}</span>}
-                        </div>
-                      ))}
+                    <div className="space-y-1.5 mb-3">
+                      {o.items.map((i) => {
+                        const itemStation = getItemStation(i.name);
+                        const highlight = kdsStation === "All" || itemStation === kdsStation;
+                        return (
+                          <div key={i.name} className={`flex items-center justify-between text-sm transition ${!highlight ? "opacity-30" : ""}`}>
+                            <span className="font-medium">{i.qty}× {i.name}</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {i.note && <span className="text-xs text-muted-foreground italic">{i.note}</span>}
+                              <Badge variant="outline" className="text-[9px] px-1">{itemStation}</Badge>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                     {urgency === "destructive" && (
                       <div className="flex items-center gap-1 text-xs text-destructive mb-2">
                         <AlertCircle className="size-3.5" /> Overdue — {elapsedMins} min
                       </div>
                     )}
-                    <Button size="sm" className="w-full gap-1.5" onClick={() => { updateOrder(o.id, { status: "Paid" }); toast.success("Order ready & marked paid"); }}>
+                    <Button size="sm" className="w-full gap-1.5" onClick={() => { updateOrder(o.id, { status: "Paid" }); toast.success("Order marked ready & served"); }}>
                       <CheckCircle2 className="size-4" /> Mark Ready &amp; Served
                     </Button>
                   </Card>
@@ -624,7 +925,7 @@ function POS() {
           )}
         </TabsContent>
 
-        {/* ── LIVE ORDERS ────────────────────────────────────────────────────── */}
+        {/* ── LIVE ORDERS ───────────────────────────────────────────────────── */}
         <TabsContent value="live">
           {openOrders.length === 0 ? (
             <Card className="p-12 text-center text-muted-foreground">
@@ -638,7 +939,100 @@ function POS() {
           )}
         </TabsContent>
 
-        {/* ── HISTORY ──────────────────────────────────────────────────────────── */}
+        {/* ── DELIVERY ──────────────────────────────────────────────────────── */}
+        <TabsContent value="delivery">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-success inline-block" /> {RIDERS.filter((r) => r.available).length} riders available</span>
+                <span className="flex items-center gap-1.5"><Truck className="size-3.5" />{deliveryOrders.filter((o) => o.status !== "Paid").length} active deliveries</span>
+              </div>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => toast.info("Use New Order → Delivery channel")}>
+                <Plus className="size-4" />New Delivery Order
+              </Button>
+            </div>
+
+            {/* Rider availability */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {RIDERS.map((r) => (
+                <Card key={r.id} className={`p-3 text-sm ${r.available ? "border-success/30 bg-success/5" : "border-warning/30 bg-warning/5"}`}>
+                  <div className="font-medium">{r.name}</div>
+                  <div className="text-xs text-muted-foreground">{r.phone}</div>
+                  <Badge className={`mt-1.5 text-[10px] ${r.available ? "bg-success/15 text-success border-success/30" : "bg-warning/20 text-warning-foreground border-warning/30"}`}>
+                    {r.available ? "Available" : "On Delivery"}
+                  </Badge>
+                </Card>
+              ))}
+            </div>
+
+            {/* Delivery order cards */}
+            {deliveryOrders.length === 0 ? (
+              <Card className="p-12 text-center text-muted-foreground">
+                <Truck className="size-10 mx-auto mb-3 opacity-30" />
+                <p>No delivery orders yet.</p>
+                <p className="text-xs mt-1">Create orders using New Order → Delivery channel.</p>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {deliveryOrders.map((o) => {
+                  const elapsedMins = Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 60000);
+                  const slaPct = Math.min(100, Math.round((elapsedMins / 30) * 100));
+                  const assignedRider = riderAssignments[o.id];
+                  const riderInfo = RIDERS.find((r) => r.id === assignedRider);
+                  return (
+                    <Card key={o.id} className={`p-4 ${o.status === "Paid" ? "opacity-60" : ""}`}>
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <div className="font-semibold text-sm">{o.customerName ?? "Customer"}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{o.orderNumber}</div>
+                        </div>
+                        <Badge className={`text-[10px] border ${o.status === "Paid" ? "bg-muted text-muted-foreground border-border" : o.status === "Sent" ? "bg-info/15 text-info border-info/30" : "bg-warning/20 text-warning-foreground border-warning/30"}`}>
+                          {o.status === "Paid" ? "Delivered" : o.status === "Sent" ? "On the way" : "Preparing"}
+                        </Badge>
+                      </div>
+                      {o.deliveryAddress && (
+                        <div className="flex items-start gap-1.5 text-xs text-muted-foreground mb-2">
+                          <MapPin className="size-3 mt-0.5 shrink-0" />{o.deliveryAddress}
+                        </div>
+                      )}
+                      <div className="text-xs text-muted-foreground mb-2">{o.items.map((i) => `${i.qty}× ${i.name}`).join(", ")}</div>
+                      <div className="flex justify-between text-sm font-semibold mb-3"><span>Total</span><span>{fmtINR(o.total)}</span></div>
+
+                      {/* SLA progress */}
+                      {o.status !== "Paid" && (
+                        <div className="mb-3">
+                          <div className="flex justify-between text-[10px] text-muted-foreground mb-1">
+                            <span>SLA Progress</span><span>{elapsedMins}m / 30m est.</span>
+                          </div>
+                          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full transition-all ${slaPct >= 90 ? "bg-destructive" : slaPct >= 70 ? "bg-warning" : "bg-success"}`} style={{ width: `${slaPct}%` }} />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Rider assignment */}
+                      {o.status !== "Paid" && (
+                        <div className="flex gap-2 items-center">
+                          <Select value={assignedRider ?? ""} onValueChange={(v) => { setRiderAssignments((p) => ({ ...p, [o.id]: v })); toast.success(`Rider ${RIDERS.find(r => r.id === v)?.name} assigned`); }}>
+                            <SelectTrigger className="h-7 text-xs flex-1">
+                              <SelectValue placeholder={riderInfo ? riderInfo.name : "Assign rider"} />
+                            </SelectTrigger>
+                            <SelectContent>{RIDERS.map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}</SelectContent>
+                          </Select>
+                          <Button size="sm" className="h-7 px-2 gap-1 text-xs" onClick={() => { updateOrder(o.id, { status: "Paid" }); toast.success("Order marked delivered"); }}>
+                            <CheckCircle2 className="size-3.5" />Delivered
+                          </Button>
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* ── HISTORY ────────────────────────────────────────────────────────── */}
         <TabsContent value="history">
           <div className="space-y-3">
             <div className="flex items-center gap-2">
@@ -653,35 +1047,36 @@ function POS() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b">
-                      {["#","Outlet","Table","Items","Total","Time",""].map((h) => (
+                      {["#","Channel","Outlet","Table / Customer","Items","Total","Time",""].map((h) => (
                         <th key={h} className={`px-4 py-3 text-xs font-medium text-muted-foreground ${h === "Total" ? "text-right" : "text-left"}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {paidOrders
-                      .filter((o) => !historySearch || o.outlet.toLowerCase().includes(historySearch.toLowerCase()) || (o.table ?? "").toLowerCase().includes(historySearch.toLowerCase()) || o.items.some((i) => i.name.toLowerCase().includes(historySearch.toLowerCase())))
+                      .filter((o) => !historySearch || o.outlet.toLowerCase().includes(historySearch.toLowerCase()) || (o.table ?? "").toLowerCase().includes(historySearch.toLowerCase()) || (o.customerName ?? "").toLowerCase().includes(historySearch.toLowerCase()) || o.items.some((i) => i.name.toLowerCase().includes(historySearch.toLowerCase())))
                       .map((o, idx) => (
                         <tr key={o.id} className="border-b last:border-0 hover:bg-accent/5">
                           <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{o.orderNumber ?? `#${String(paidOrders.length - idx).padStart(4, "0")}`}</td>
+                          <td className="px-4 py-3">
+                            {o.channel && o.channel !== "Dine-In" ? (
+                              <Badge variant="outline" className="text-[9px] px-1.5">{o.channel}</Badge>
+                            ) : <span className="text-xs text-muted-foreground">Dine-In</span>}
+                          </td>
                           <td className="px-4 py-3"><div className="flex items-center gap-1.5">{OUTLET_ICON[o.outlet as Outlet]}{o.outlet}</div></td>
-                          <td className="px-4 py-3 font-mono text-xs">{o.table ?? "Room Svc"}</td>
-                          <td className="px-4 py-3 text-xs text-muted-foreground max-w-[200px] truncate">{o.items.map((i) => `${i.qty}× ${i.name}`).join(", ")}</td>
+                          <td className="px-4 py-3 font-mono text-xs">{o.customerName ?? o.table ?? "Room Svc"}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground max-w-[180px] truncate">{o.items.map((i) => `${i.qty}× ${i.name}`).join(", ")}</td>
                           <td className="px-4 py-3 text-right font-semibold">{fmtINR(o.total)}</td>
                           <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{o.createdAt}</td>
                           <td className="px-4 py-3">
                             <div className="flex gap-1">
-                              <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" onClick={() => setReceiptOrder(o)}>
-                                <Printer className="size-3" />Bill
-                              </Button>
-                              <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-destructive hover:text-destructive" onClick={() => { setVoidId(o.id); setVoidReason(""); }}>
-                                <X className="size-3" />Void
-                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" onClick={() => setReceiptOrder(o)}><Printer className="size-3" />Bill</Button>
+                              <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-destructive hover:text-destructive" onClick={() => { setVoidId(o.id); setVoidReason(""); }}><X className="size-3" />Void</Button>
                             </div>
                           </td>
                         </tr>
                       ))}
-                    {paidOrders.length === 0 && <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">No paid orders yet</td></tr>}
+                    {paidOrders.length === 0 && <tr><td colSpan={8} className="text-center py-10 text-muted-foreground">No paid orders yet</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -689,7 +1084,7 @@ function POS() {
           </div>
         </TabsContent>
 
-        {/* ── ANALYTICS ────────────────────────────────────────────────────────── */}
+        {/* ── ANALYTICS ──────────────────────────────────────────────────────── */}
         <TabsContent value="analytics">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <Card className="p-5">
@@ -757,12 +1152,10 @@ function POS() {
           )}
         </TabsContent>
 
-        {/* ── TABLE RESERVATIONS ───────────────────────────────────────────── */}
+        {/* ── TABLE RESERVATIONS ────────────────────────────────────────────── */}
         <TabsContent value="reservations">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-sm text-muted-foreground">
-              {tableReservations.filter((r) => r.status === "Confirmed").length} confirmed reservations
-            </p>
+            <p className="text-sm text-muted-foreground">{tableReservations.filter((r) => r.status === "Confirmed").length} confirmed reservations</p>
             <Button size="sm" className="gap-1.5" onClick={() => setTableResOpen(true)}><Plus className="size-4" />New Reservation</Button>
           </div>
           <Card>
@@ -785,36 +1178,215 @@ function POS() {
                       <td className="px-4 py-3 text-xs text-muted-foreground">{r.phone}</td>
                       <td className="px-4 py-3 text-center">{r.guests}</td>
                       <td className="px-4 py-3">
-                        <Badge className={`text-[10px] ${r.status === "Confirmed" ? "bg-success/15 text-success border-success/30" : "bg-warning/20 text-warning-foreground border-warning/30"}`}>
-                          {r.status}
-                        </Badge>
+                        <Badge className={`text-[10px] ${r.status === "Confirmed" ? "bg-success/15 text-success border-success/30" : "bg-warning/20 text-warning-foreground border-warning/30"}`}>{r.status}</Badge>
                       </td>
                       <td className="px-4 py-3 flex gap-1">
                         {r.status === "Pending" && (
-                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
-                            onClick={() => { setTableReservations((p) => p.map((x) => x.id === r.id ? { ...x, status: "Confirmed" } : x)); toast.success("Reservation confirmed"); }}>
-                            Confirm
-                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => { setTableReservations((p) => p.map((x) => x.id === r.id ? { ...x, status: "Confirmed" } : x)); toast.success("Reservation confirmed"); }}>Confirm</Button>
                         )}
-                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                          onClick={() => { setTableReservations((p) => p.filter((x) => x.id !== r.id)); toast.success("Reservation cancelled"); }}>
-                          Cancel
-                        </Button>
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:text-destructive" onClick={() => { setTableReservations((p) => p.filter((x) => x.id !== r.id)); toast.success("Reservation cancelled"); }}>Cancel</Button>
                       </td>
                     </tr>
                   ))}
-                  {tableReservations.length === 0 && (
-                    <tr><td colSpan={8} className="text-center py-10 text-muted-foreground">No reservations yet.</td></tr>
-                  )}
+                  {tableReservations.length === 0 && <tr><td colSpan={8} className="text-center py-10 text-muted-foreground">No reservations yet.</td></tr>}
                 </tbody>
               </table>
             </div>
           </Card>
         </TabsContent>
 
+        {/* ── BANQUET ───────────────────────────────────────────────────────── */}
+        <TabsContent value="banquet">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <span><strong className="text-foreground">{banquetEvents.filter(e => e.status === "Confirmed").length}</strong> confirmed</span>
+              <span><strong className="text-foreground">{banquetEvents.filter(e => e.status === "Tentative").length}</strong> tentative</span>
+              <span><strong className="text-foreground">{fmtINR(banquetEvents.reduce((s, e) => s + e.advance, 0))}</strong> advances received</span>
+            </div>
+            <Button size="sm" className="gap-1.5" onClick={() => { setNewBanquet({ ...BLANK_BANQUET }); setBanquetDialogOpen(true); }}>
+              <Plus className="size-4" />New Event
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {banquetEvents.map((ev) => (
+              <Card key={ev.id} className="p-4 flex flex-col gap-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold leading-tight truncate">{ev.name}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{ev.hall}</div>
+                  </div>
+                  <Badge className={`text-[10px] border shrink-0 ${BANQUET_STATUS_META[ev.status].color}`}>{ev.status}</Badge>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 text-xs">
+                  <div className="flex items-center gap-1 text-muted-foreground"><CalendarDays className="size-3" />{ev.date} {ev.time}</div>
+                  <div className="flex items-center gap-1 text-muted-foreground"><Users className="size-3" />{ev.covers} covers</div>
+                  <div className="flex items-center gap-1 text-muted-foreground"><Phone className="size-3" />{ev.contactName}</div>
+                  <div className="flex items-center gap-1 text-muted-foreground">{ev.phone}</div>
+                </div>
+                <Separator />
+                <div className="grid grid-cols-2 gap-1.5 text-xs">
+                  <div><span className="text-muted-foreground">Package:</span> <span className="font-medium">{ev.package || "—"}</span></div>
+                  <div><span className="text-muted-foreground">Total:</span> <span className="font-semibold text-foreground">{fmtINR(ev.total)}</span></div>
+                  <div><span className="text-muted-foreground">Advance:</span> <span className="text-success font-medium">{fmtINR(ev.advance)}</span></div>
+                  <div><span className="text-muted-foreground">Balance:</span> <span className={`font-medium ${ev.total - ev.advance > 0 ? "text-warning-foreground" : "text-muted-foreground"}`}>{fmtINR(Math.max(0, ev.total - ev.advance))}</span></div>
+                </div>
+                <div className="flex gap-1.5 mt-auto pt-1">
+                  {ev.status === "Tentative" && (
+                    <Button size="sm" variant="outline" className="flex-1 h-7 text-xs" onClick={() => { setBanquetEvents((p) => p.map((e) => e.id === ev.id ? { ...e, status: "Confirmed" } : e)); toast.success("Event confirmed"); }}>Confirm</Button>
+                  )}
+                  {ev.status === "Confirmed" && (
+                    <Button size="sm" variant="outline" className="flex-1 h-7 text-xs" onClick={() => { setBanquetEvents((p) => p.map((e) => e.id === ev.id ? { ...e, status: "In Progress" } : e)); toast.success("Event started"); }}>Start Event</Button>
+                  )}
+                  {ev.status === "In Progress" && (
+                    <Button size="sm" className="flex-1 h-7 text-xs" onClick={() => { setBanquetEvents((p) => p.map((e) => e.id === ev.id ? { ...e, status: "Completed" } : e)); toast.success("Event completed"); }}>Complete</Button>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                    onClick={() => { setBanquetEvents((p) => p.map((e) => e.id === ev.id ? { ...e, status: "Cancelled" } : e)); toast.success("Event cancelled"); }}>
+                    Cancel
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+
+        {/* ── CASHIER SHIFT ─────────────────────────────────────────────────── */}
+        <TabsContent value="cashier">
+          {!currentShift ? (
+            <div className="max-w-sm mx-auto">
+              <Card className="p-6">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="size-10 rounded-full bg-primary/10 grid place-items-center"><Wallet className="size-5 text-primary" /></div>
+                  <div>
+                    <h3 className="font-semibold">Open Cashier Shift</h3>
+                    <p className="text-xs text-muted-foreground">Count and enter your opening float to begin</p>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <Label className="text-xs">Cashier Name</Label>
+                    <Input className="h-8 mt-1" placeholder="Your name" value={shiftName} onChange={(e) => setShiftName(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Opening Float (₹)</Label>
+                    <Input type="number" min={0} className="h-8 mt-1" placeholder="5000" value={shiftFloat} onChange={(e) => setShiftFloat(e.target.value)} />
+                  </div>
+                  <Button className="w-full gap-1.5 mt-2" onClick={openShift}><Zap className="size-4" />Open Shift</Button>
+                </div>
+              </Card>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold">Active Shift — {currentShift.cashierName}</h3>
+                  <p className="text-xs text-muted-foreground">Opened: {currentShift.openedAt}</p>
+                </div>
+                <Badge className="bg-success/15 text-success border-success/30">Shift Open</Badge>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Card className="p-4 text-center">
+                  <div className="text-xs text-muted-foreground mb-1">Opening Float</div>
+                  <div className="text-xl font-bold">{fmtINR(currentShift.openingFloat)}</div>
+                </Card>
+                <Card className="p-4 text-center">
+                  <div className="text-xs text-muted-foreground mb-1">Cash Sales</div>
+                  <div className="text-xl font-bold text-success">{fmtINR(paidOrders.filter((o) => o.total > 0).length * 820)}</div>
+                </Card>
+                <Card className="p-4 text-center">
+                  <div className="text-xs text-muted-foreground mb-1">Card + UPI Sales</div>
+                  <div className="text-xl font-bold">{fmtINR(todayRevenue - paidOrders.filter((o) => o.total > 0).length * 820)}</div>
+                </Card>
+                <Card className="p-4 text-center">
+                  <div className="text-xs text-muted-foreground mb-1">Expected Closing</div>
+                  <div className="text-xl font-bold text-primary">{fmtINR(currentShift.openingFloat + paidOrders.filter((o) => o.total > 0).length * 820)}</div>
+                </Card>
+              </div>
+
+              <Card className="p-5">
+                <h4 className="font-semibold mb-3">Payment Breakdown — This Shift</h4>
+                <div className="space-y-2">
+                  {[
+                    { label: "Cash", value: paidOrders.filter((o) => o.total > 0).length * 820 },
+                    { label: "Card", value: Math.round(todayRevenue * 0.45) },
+                    { label: "UPI", value: Math.round(todayRevenue * 0.20) },
+                    { label: "Room Charge", value: Math.round(todayRevenue * 0.10) },
+                  ].map((row) => (
+                    <div key={row.label} className="flex items-center gap-3">
+                      <span className="text-sm w-24 shrink-0">{row.label}</span>
+                      <div className="flex-1 bg-muted rounded-full h-1.5 overflow-hidden">
+                        <div className="h-full bg-primary rounded-full" style={{ width: `${Math.min(100, Math.round((row.value / Math.max(todayRevenue, 1)) * 100))}%` }} />
+                      </div>
+                      <span className="text-sm font-medium w-20 text-right shrink-0">{fmtINR(row.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              <Card className="p-5 border-warning/30">
+                <h4 className="font-semibold mb-3">Close Shift</h4>
+                <div className="flex gap-3 items-end">
+                  <div className="flex-1">
+                    <Label className="text-xs">Closing Cash Count (₹)</Label>
+                    <Input type="number" min={0} className="h-8 mt-1" placeholder="Enter physical cash count" value={closingCash} onChange={(e) => setClosingCash(e.target.value)} />
+                  </div>
+                  {closingCash && (
+                    <div className="text-right text-sm mb-0.5">
+                      <div className="text-xs text-muted-foreground">Variance</div>
+                      <div className={`font-semibold ${Number(closingCash) - (currentShift.openingFloat + paidOrders.filter((o) => o.total > 0).length * 820) >= 0 ? "text-success" : "text-destructive"}`}>
+                        {fmtINR(Number(closingCash) - (currentShift.openingFloat + paidOrders.filter((o) => o.total > 0).length * 820))}
+                      </div>
+                    </div>
+                  )}
+                  <Button variant="outline" className="gap-1.5" onClick={() => closeShift(currentShift.id)} disabled={!closingCash}>
+                    <CheckCircle2 className="size-4" />Close Shift
+                  </Button>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {/* Shift history */}
+          {cashierShifts.filter((s) => s.status === "Closed").length > 0 && (
+            <div className="mt-6">
+              <h4 className="font-semibold mb-3 text-sm">Shift History</h4>
+              <Card>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        {["Cashier", "Opened", "Closed", "Float", "Cash Sales", "Closing", "Variance"].map((h) => (
+                          <th key={h} className="px-4 py-3 text-xs font-medium text-muted-foreground text-left">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cashierShifts.filter((s) => s.status === "Closed").map((s) => {
+                        const variance = (s.closingCash ?? 0) - s.openingFloat - s.cashSales;
+                        return (
+                          <tr key={s.id} className="border-b last:border-0 hover:bg-accent/5">
+                            <td className="px-4 py-3 font-medium">{s.cashierName}</td>
+                            <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{s.openedAt}</td>
+                            <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{s.closedAt ?? "—"}</td>
+                            <td className="px-4 py-3">{fmtINR(s.openingFloat)}</td>
+                            <td className="px-4 py-3 text-success">{fmtINR(s.cashSales)}</td>
+                            <td className="px-4 py-3">{s.closingCash != null ? fmtINR(s.closingCash) : "—"}</td>
+                            <td className={`px-4 py-3 font-semibold ${variance >= 0 ? "text-success" : "text-destructive"}`}>{s.closingCash != null ? `${variance >= 0 ? "+" : ""}${fmtINR(variance)}` : "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          )}
+        </TabsContent>
       </Tabs>
 
-      {/* New Table Reservation Dialog */}
+      {/* ── New Table Reservation Dialog ── */}
       <Dialog open={tableResOpen} onOpenChange={setTableResOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Book a Table</DialogTitle></DialogHeader>
@@ -844,7 +1416,46 @@ function POS() {
         </DialogContent>
       </Dialog>
 
-      {/* Void Order Dialog */}
+      {/* ── New Banquet Event Dialog ── */}
+      <Dialog open={banquetDialogOpen} onOpenChange={setBanquetDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Add Banquet Event</DialogTitle></DialogHeader>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <Label className="text-xs">Event Name *</Label>
+              <Input className="h-8 mt-1" placeholder="e.g. Singh Wedding Reception" value={newBanquet.name} onChange={(e) => setNewBanquet({ ...newBanquet, name: e.target.value })} />
+            </div>
+            <div><Label className="text-xs">Date</Label><Input type="date" className="h-8 mt-1" value={newBanquet.date} onChange={(e) => setNewBanquet({ ...newBanquet, date: e.target.value })} /></div>
+            <div><Label className="text-xs">Time</Label><Input type="time" className="h-8 mt-1" value={newBanquet.time} onChange={(e) => setNewBanquet({ ...newBanquet, time: e.target.value })} /></div>
+            <div>
+              <Label className="text-xs">Hall</Label>
+              <select className="mt-1 h-8 w-full border rounded px-2 text-sm bg-background" value={newBanquet.hall} onChange={(e) => setNewBanquet({ ...newBanquet, hall: e.target.value })}>
+                {BANQUET_HALLS.map((h) => <option key={h}>{h}</option>)}
+              </select>
+            </div>
+            <div><Label className="text-xs">Covers</Label><Input type="number" min={1} className="h-8 mt-1" value={newBanquet.covers} onChange={(e) => setNewBanquet({ ...newBanquet, covers: e.target.value })} /></div>
+            <div className="col-span-2"><Label className="text-xs">Contact Name</Label><Input className="h-8 mt-1" placeholder="Guest / organiser name" value={newBanquet.contactName} onChange={(e) => setNewBanquet({ ...newBanquet, contactName: e.target.value })} /></div>
+            <div><Label className="text-xs">Phone</Label><Input className="h-8 mt-1" value={newBanquet.phone} onChange={(e) => setNewBanquet({ ...newBanquet, phone: e.target.value })} /></div>
+            <div><Label className="text-xs">Package</Label><Input className="h-8 mt-1" placeholder="Package name" value={newBanquet.package} onChange={(e) => setNewBanquet({ ...newBanquet, package: e.target.value })} /></div>
+            <div><Label className="text-xs">Advance (₹)</Label><Input type="number" min={0} className="h-8 mt-1" value={newBanquet.advance} onChange={(e) => setNewBanquet({ ...newBanquet, advance: e.target.value })} /></div>
+            <div><Label className="text-xs">Total (₹)</Label><Input type="number" min={0} className="h-8 mt-1" value={newBanquet.total} onChange={(e) => setNewBanquet({ ...newBanquet, total: e.target.value })} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBanquetDialogOpen(false)}>Cancel</Button>
+            <Button disabled={!newBanquet.name || !newBanquet.date || !newBanquet.contactName}
+              onClick={() => {
+                setBanquetEvents((p) => [...p, { id: `be${Date.now()}`, name: newBanquet.name, date: newBanquet.date, time: newBanquet.time, hall: newBanquet.hall, covers: Number(newBanquet.covers) || 0, contactName: newBanquet.contactName, phone: newBanquet.phone, package: newBanquet.package, advance: Number(newBanquet.advance) || 0, total: Number(newBanquet.total) || 0, status: "Tentative" }]);
+                toast.success(`Event "${newBanquet.name}" added`);
+                setBanquetDialogOpen(false);
+                setNewBanquet({ ...BLANK_BANQUET });
+              }}>
+              Add Event
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Void Order Dialog ── */}
       <Dialog open={!!voidId} onOpenChange={() => setVoidId(null)}>
         <DialogContent className="max-w-xs">
           <DialogHeader><DialogTitle>Void Order</DialogTitle></DialogHeader>
@@ -860,7 +1471,7 @@ function POS() {
         </DialogContent>
       </Dialog>
 
-      {/* Item note dialog */}
+      {/* ── Item Note Dialog ── */}
       <Dialog open={!!noteItemId} onOpenChange={() => setNoteItemId(null)}>
         <DialogContent className="max-w-xs">
           <DialogHeader><DialogTitle>Item Note</DialogTitle></DialogHeader>
@@ -869,12 +1480,12 @@ function POS() {
         </DialogContent>
       </Dialog>
 
-      {/* KOT Modal */}
+      {/* ── KOT Modal ── */}
       <Dialog open={kotModal} onOpenChange={setKotModal}>
-        <KOTModal order={{ outlet, table: outlet !== "Room Service" ? table : undefined, items: [] }} onClose={() => setKotModal(false)} />
+        <KOTModal order={{ ...kotContext, items: kotItems }} onClose={() => setKotModal(false)} />
       </Dialog>
 
-      {/* Receipt Modal */}
+      {/* ── Receipt Modal ── */}
       {receiptOrder && (
         <Dialog open={!!receiptOrder} onOpenChange={() => setReceiptOrder(null)}>
           <ReceiptModal order={receiptOrder} onClose={() => setReceiptOrder(null)} />
@@ -884,7 +1495,7 @@ function POS() {
   );
 }
 
-// ── Live Order Card ───────────────────────────────────────────────────────────
+// ── Live Order Card ────────────────────────────────────────────────────────────
 function LiveOrderCard({ order, onUpdate }: { order: POSOrder; onUpdate: (id: string, patch: Partial<POSOrder>) => void }) {
   const statusColor: Record<string, string> = {
     Open: "bg-warning/15 text-warning-foreground border-warning/30",
@@ -895,8 +1506,13 @@ function LiveOrderCard({ order, onUpdate }: { order: POSOrder; onUpdate: (id: st
     <Card className="p-4 flex flex-col gap-3">
       <div className="flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-1.5 font-semibold text-sm">{OUTLET_ICON[order.outlet as Outlet]}{order.outlet}</div>
-          <div className="text-xs text-muted-foreground mt-0.5 font-mono">{order.table ?? "Room Svc"}</div>
+          <div className="flex items-center gap-1.5 font-semibold text-sm">
+            {OUTLET_ICON[order.outlet as Outlet]}{order.outlet}
+            {order.channel && order.channel !== "Dine-In" && <Badge variant="outline" className="text-[9px] px-1">{order.channel}</Badge>}
+          </div>
+          <div className="text-xs text-muted-foreground mt-0.5 font-mono">
+            {order.customerName ?? order.table ?? "Room Svc"}
+          </div>
         </div>
         <Badge className={`text-[10px] border ${statusColor[order.status] ?? ""}`}>
           {order.status === "Sent" ? "In Kitchen" : order.status}

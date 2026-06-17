@@ -97,6 +97,7 @@ export interface InventoryItem {
 }
 
 export type Outlet = "Restaurant" | "Bar" | "Room Service" | "Spa";
+export type OrderChannel = "Dine-In" | "Takeaway" | "Delivery" | "Banquet";
 
 export interface MenuItem {
   id: string;
@@ -112,8 +113,11 @@ export interface POSOrder {
   id: string;
   orderNumber: string;
   outlet: Outlet;
+  channel?: OrderChannel;
   table?: string;
   roomId?: string;
+  customerName?: string;
+  deliveryAddress?: string;
   items: { name: string; qty: number; price: number; note?: string }[];
   status: "Open" | "Sent" | "Paid";
   total: number;
@@ -313,9 +317,11 @@ function seed() {
   ];
 
   const orders: POSOrder[] = [
-    { id: uid(), outlet: "Restaurant", table: "T-04", items: [{name:"Butter Chicken",qty:1,price:520},{name:"Naan",qty:3,price:60}], status: "Paid", total: 700, createdAt: today() },
-    { id: uid(), outlet: "Bar", table: "B-02", items: [{name:"Old Fashioned",qty:2,price:650}], status: "Open", total: 1300, createdAt: today() },
-    { id: uid(), outlet: "Room Service", roomId: rooms[0].id, items: [{name:"Club Sandwich",qty:1,price:380},{name:"Fresh Juice",qty:2,price:180}], status: "Sent", total: 740, createdAt: today() },
+    { id: uid(), orderNumber: "ORD-00001", outlet: "Restaurant", channel: "Dine-In", table: "T-04", items: [{name:"Butter Chicken",qty:1,price:520},{name:"Naan",qty:3,price:60}], status: "Paid", total: 700, createdAt: today() },
+    { id: uid(), orderNumber: "ORD-00002", outlet: "Bar", channel: "Dine-In", table: "B-02", items: [{name:"Old Fashioned",qty:2,price:650}], status: "Open", total: 1300, createdAt: today() },
+    { id: uid(), orderNumber: "ORD-00003", outlet: "Room Service", items: [{name:"Club Sandwich",qty:1,price:380},{name:"Fresh Juice",qty:2,price:180}], status: "Sent", total: 740, createdAt: today() },
+    { id: uid(), orderNumber: "ORD-00004", outlet: "Restaurant", channel: "Delivery", customerName: "Amit Verma", deliveryAddress: "Flat 4B, Green Towers, Bandra West", items: [{name:"Butter Chicken",qty:2,price:520},{name:"Veg Biryani",qty:1,price:340},{name:"Garlic Naan",qty:4,price:80}], status: "Sent", total: 1900, createdAt: today() },
+    { id: uid(), orderNumber: "ORD-00005", outlet: "Restaurant", channel: "Delivery", customerName: "Riya Shah", deliveryAddress: "Office Park, 3rd Floor, Andheri East", items: [{name:"Paneer Tikka",qty:1,price:380},{name:"Dal Makhani",qty:1,price:280},{name:"Naan",qty:2,price:60}], status: "Sent", total: 780, createdAt: today() },
   ];
 
   const purchaseOrders: PurchaseOrder[] = [
@@ -532,7 +538,7 @@ export const useMHMS = create<State>()(
         set({ auditLog: [{ id: uid(), date: today(), user, action }, ...get().auditLog].slice(0, 200) }),
       resetData: () => set({ currentProperty: "p1", businessDate: today(), auditLog: [{ id: uid(), date: today(), user: "System", action: "Demo data reset" }], ...seed() }),
     }),
-    { name: "mhms-store-v3" },
+    { name: "mhms-store-v4" },
   ),
 );
 
