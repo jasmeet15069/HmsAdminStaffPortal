@@ -22,5 +22,13 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
-  nitro: { preset },
+  nitro: {
+    preset,
+    // Same-origin /api proxy to the live Go API, mirroring the v1 frontend's
+    // vercel.json rewrite. The browser calls relative /api/... (same origin),
+    // so there is no cross-origin/CORS call; the server proxies to the backend.
+    routeRules: {
+      "/api/**": { proxy: "https://hmsadmin.jazverse.online/api/**" },
+    },
+  },
 });

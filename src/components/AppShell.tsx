@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMHMS } from "@/lib/mhms-store";
-import { useAuth } from "@/lib/api/auth";
+import { useAuth, isAuthenticated } from "@/lib/api/auth";
 import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -77,6 +77,17 @@ export default function AppShell() {
   useEffect(() => setMounted(true), []);
   const authedUser = mounted ? user : null;
 
+  // Auth guard: redirect unauthenticated users to /login; redirect authenticated
+  // users away from /login. Only runs client-side (after mount) to avoid SSR mismatch.
+  useEffect(() => {
+    if (!mounted) return;
+    if (!isAuthenticated() && path !== "/login") {
+      navigate({ to: "/login" });
+    } else if (isAuthenticated() && path === "/login") {
+      navigate({ to: "/" });
+    }
+  }, [mounted, path, navigate]);
+
   const displayName = authedUser?.email ?? "Guest";
   const initials =
     (authedUser?.email ?? "G")
@@ -94,6 +105,11 @@ export default function AppShell() {
         <Toaster richColors position="top-right" />
       </>
     );
+  }
+
+  // While auth state is loading (pre-mount), don't flash the full portal.
+  if (!mounted || !isAuthenticated()) {
+    return null;
   }
 
   return (

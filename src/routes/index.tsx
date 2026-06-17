@@ -1,7 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR, roomStatusMeta } from "@/lib/mhms-store";
-import { useDashboardData, useDashboardStats } from "@/lib/api/hooks";
+import {
+  useDashboardData,
+  useDashboardStats,
+  useHousekeepingTasks,
+  useRooms,
+} from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,13 +34,13 @@ export const Route = createFileRoute("/")({
 });
 
 function Dashboard() {
-  const { rooms, reservations, guests, folios, tasks, maintenance } = useMHMS();
+  const { rooms, reservations, folios, tasks } = useMHMS();
   const today = new Date().toISOString().slice(0, 10);
 
-  // Live data from the Go API. When unavailable (signed out / backend down),
-  // these are undefined and we fall back to the local demo store below.
   const { data: liveStats } = useDashboardStats();
   const { data: liveData } = useDashboardData();
+  const { data: liveRooms } = useRooms();
+  const { data: liveTasks } = useHousekeepingTasks();
   const isLive = !!liveStats;
 
   const occupied = liveStats?.rooms_occupied ?? rooms.filter((r) => r.status === "occupied").length;
@@ -53,37 +58,54 @@ function Dashboard() {
   const occupancyPct = liveStats
     ? Math.round(liveStats.occupancy_rate)
     : Math.round((occupied / rooms.length) * 100);
-  const revenue = liveStats?.revenue_today ?? folios.reduce((s, f) => s + f.amount, 0);
-  const adr = Math.round(revenue / Math.max(occupied, 1));
+  const revenueToday = liveStats?.revenue_today ?? folios.reduce((s, f) => s + f.amount, 0);
+  const adr = Math.round(revenueToday / Math.max(occupied, 1));
+
+  // MTD revenue = sum of all department current-month totals; falls back to today's revenue
+  const revenueMTD = liveData?.charts.department_revenue?.length
+    ? liveData.charts.department_revenue.reduce((s, d) => s + d.current, 0)
+    : revenueToday;
 
   const revenueByDept = liveData?.charts.department_revenue?.length
     ? liveData.charts.department_revenue.map((d) => ({ name: d.department, value: d.current }))
-    : [
-        {
-          name: "Rooms",
-          value: folios.filter((f) => f.category === "Room").reduce((s, f) => s + f.amount, 0),
-        },
-        { name: "F&B", value: 285000 },
-        { name: "Spa", value: 76000 },
-        { name: "Other", value: 42000 },
-      ];
+    : [];
 
-  const weekData = Array.from({ length: 7 }).map((_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    return {
-      day: d.toLocaleDateString("en", { weekday: "short" }),
-      occupancy: 60 + Math.round(Math.random() * 35),
-      revenue: 180000 + Math.round(Math.random() * 220000),
-    };
-  });
+  // 7-day trend: use API occupancy + revenue charts; zero-fill when not live
+  const weekData = (() => {
+    if (liveData?.charts.occupancy_trend?.length) {
+      return liveData.charts.occupancy_trend.map((occ, i) => {
+        const rev = liveData.charts.revenue_trend?.[i];
+        return {
+          day: new Date(occ.date).toLocaleDateString("en", { weekday: "short" }),
+          occupancy: Math.round(occ.rate),
+          revenue: rev ? Math.round(rev.room + rev.fnb + rev.other) : 0,
+        };
+      });
+    }
+    return Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      return {
+        day: d.toLocaleDateString("en", { weekday: "short" }),
+        occupancy: 0,
+        revenue: 0,
+      };
+    });
+  })();
 
-  const statusBreakdown = (
-    ["vacant_clean", "occupied", "vacant_dirty", "maintenance", "blocked"] as const
-  ).map((s) => ({
-    name: roomStatusMeta[s].label,
-    value: rooms.filter((r) => r.status === s).length,
-  }));
+  // Room status breakdown: live API rooms or demo store fallback
+  const statusBreakdown = liveRooms?.length
+    ? (["available", "occupied", "cleaning", "maintenance"] as const).map((s) => ({
+        name: s.charAt(0).toUpperCase() + s.slice(1),
+        value: liveRooms.filter((r) => r.status === s).length,
+      }))
+    : (["vacant_clean", "occupied", "vacant_dirty", "maintenance", "blocked"] as const).map(
+        (s) => ({
+          name: roomStatusMeta[s].label,
+          value: rooms.filter((r) => r.status === s).length,
+        })
+      );
+
   const COLORS = [
     "hsl(var(--chart-2))",
     "hsl(var(--chart-1))",
@@ -129,7 +151,7 @@ function Dashboard() {
         />
         <Stat
           label="Total Revenue (MTD)"
-          value={fmtINR(revenue + 403000)}
+          value={fmtINR(revenueMTD)}
           hint="All departments"
           tone="success"
         />
@@ -138,12 +160,12 @@ function Dashboard() {
         <Stat
           label="In-House Guests"
           value={inHouse}
-          hint={`${guests.filter((g) => g.vip).length} VIP`}
+          hint={`${liveStats?.staff_clocked_in ?? 0} staff on duty`}
           tone="info"
         />
         <Stat
           label="Open Tickets"
-          value={maintenance.filter((m) => m.status !== "Resolved" && m.status !== "Closed").length}
+          value={liveStats?.pending_complaints ?? 0}
           hint="Maintenance"
           tone="warning"
         />
@@ -266,37 +288,66 @@ function Dashboard() {
           <div className="mt-5">
             <h4 className="text-sm font-semibold mb-2">Pending Housekeeping</h4>
             <div className="space-y-1.5">
-              {tasks
-                .filter((t) => t.status !== "Completed")
-                .slice(0, 5)
-                .map((t) => {
-                  const room = rooms.find((r) => r.id === t.roomId);
-                  return (
-                    <div
-                      key={t.id}
-                      className="flex items-center justify-between text-sm py-1.5 border-b last:border-0"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Badge variant="outline" className="font-mono">
-                          {room?.number}
-                        </Badge>
-                        <span>{t.type}</span>
-                        <span className="text-muted-foreground text-xs">
-                          · {t.assignedTo || "Unassigned"}
-                        </span>
-                      </div>
-                      <Badge
-                        variant={
-                          t.priority === "High" || t.priority === "Urgent"
-                            ? "destructive"
-                            : "secondary"
-                        }
+              {liveTasks
+                ? liveTasks
+                    .filter((t) => t.status !== "completed")
+                    .slice(0, 5)
+                    .map((t) => (
+                      <div
+                        key={t.id}
+                        className="flex items-center justify-between text-sm py-1.5 border-b last:border-0"
                       >
-                        {t.priority}
-                      </Badge>
-                    </div>
-                  );
-                })}
+                        <div className="flex items-center gap-3">
+                          <Badge variant="outline" className="font-mono">
+                            {t.room?.room_number ?? "—"}
+                          </Badge>
+                          <span>{t.task_type}</span>
+                          <span className="text-muted-foreground text-xs">
+                            · {t.assigned_staff?.full_name ?? "Unassigned"}
+                          </span>
+                        </div>
+                        <Badge
+                          variant={
+                            t.priority === "high" || t.priority === "urgent"
+                              ? "destructive"
+                              : "secondary"
+                          }
+                        >
+                          {t.priority}
+                        </Badge>
+                      </div>
+                    ))
+                : tasks
+                    .filter((t) => t.status !== "Completed")
+                    .slice(0, 5)
+                    .map((t) => {
+                      const room = rooms.find((r) => r.id === t.roomId);
+                      return (
+                        <div
+                          key={t.id}
+                          className="flex items-center justify-between text-sm py-1.5 border-b last:border-0"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Badge variant="outline" className="font-mono">
+                              {room?.number}
+                            </Badge>
+                            <span>{t.type}</span>
+                            <span className="text-muted-foreground text-xs">
+                              · {t.assignedTo || "Unassigned"}
+                            </span>
+                          </div>
+                          <Badge
+                            variant={
+                              t.priority === "High" || t.priority === "Urgent"
+                                ? "destructive"
+                                : "secondary"
+                            }
+                          >
+                            {t.priority}
+                          </Badge>
+                        </div>
+                      );
+                    })}
             </div>
           </div>
         </Card>

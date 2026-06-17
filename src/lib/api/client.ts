@@ -12,6 +12,9 @@
 
 import type { Session } from "./types";
 
+// Base URL for the Go API. Empty string => relative, same-origin requests
+// (/api/...), which the deploy platform proxies to the backend (no CORS). A
+// non-empty value (e.g. http://localhost:8787 in dev) is used as an absolute base.
 export const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:8787").replace(/\/$/, "");
 
 const ACCESS_KEY = "hh_access_token";
@@ -61,13 +64,16 @@ interface RequestOptions {
 }
 
 function buildUrl(path: string, query?: RequestOptions["query"]): string {
-  const url = new URL(API_URL + (path.startsWith("/") ? path : `/${path}`));
+  const p = path.startsWith("/") ? path : `/${path}`;
+  const qs = new URLSearchParams();
   if (query) {
     for (const [k, v] of Object.entries(query)) {
-      if (v !== undefined) url.searchParams.set(k, String(v));
+      if (v !== undefined) qs.set(k, String(v));
     }
   }
-  return url.toString();
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  // Relative (same-origin) when API_URL is empty; absolute otherwise.
+  return `${API_URL}${p}${suffix}`;
 }
 
 // Refreshes the access token using the stored refresh token. Returns the new
