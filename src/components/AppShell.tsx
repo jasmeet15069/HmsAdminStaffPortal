@@ -21,7 +21,6 @@ import {
   Bell,
   Search,
   ChevronDown,
-  RotateCw,
   LogIn,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -66,7 +65,7 @@ const nav = [
 export default function AppShell() {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
-  const { properties, currentProperty, setProperty, resetData } = useMHMS();
+  const { properties, currentProperty, setProperty } = useMHMS();
   const current = properties.find((p) => p.id === currentProperty) ?? properties[0];
 
   const user = useAuth((s) => s.user);
@@ -186,17 +185,6 @@ export default function AppShell() {
               className="pl-9 h-9 bg-background"
             />
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              resetData();
-              toast.success("Demo data reset");
-            }}
-            className="gap-2"
-          >
-            <RotateCw className="size-4" /> Reset
-          </Button>
           <Button variant="ghost" size="icon" className="relative">
             <Bell className="size-5" />
             <Badge className="absolute -top-1 -right-1 size-4 p-0 grid place-items-center text-[10px]">
