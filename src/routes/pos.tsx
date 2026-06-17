@@ -148,6 +148,21 @@ const PAY_METHODS = [
 
 const PIE_COLORS = ["hsl(var(--chart-1))","hsl(var(--chart-2))","hsl(var(--chart-3))","hsl(var(--chart-4))"];
 
+const WAITERS = [
+  { id: "w1", name: "Arjun Mehta" },
+  { id: "w2", name: "Sona Patel" },
+  { id: "w3", name: "Vikram Das" },
+  { id: "w4", name: "Priya Rao" },
+  { id: "w5", name: "Karan Singh" },
+];
+
+const INITIAL_TABLE_RES = [
+  { id: "tr1", date: "2026-06-17", time: "19:30", table: "T-04", guests: 4, name: "Mr. Sharma", phone: "9876543210", status: "Confirmed" },
+  { id: "tr2", date: "2026-06-17", time: "20:00", table: "T-08", guests: 2, name: "Ms. Kapoor", phone: "9123456789", status: "Confirmed" },
+  { id: "tr3", date: "2026-06-18", time: "13:00", table: "T-02", guests: 6, name: "Singh Family", phone: "9988776655", status: "Pending" },
+  { id: "tr4", date: "2026-06-18", time: "19:00", table: "T-06", guests: 4, name: "Mr. Verma", phone: "9012345678", status: "Confirmed" },
+];
+
 type CartItem = { id: string; name: string; qty: number; price: number; note?: string };
 type PayMethod = typeof PAY_METHODS[number]["id"];
 type TableStatus = "available" | "occupied" | "reserved" | "cleaning";
@@ -256,6 +271,16 @@ function POS() {
   const [noteText, setNoteText] = useState("");
   const [receiptOrder, setReceiptOrder] = useState<POSOrder | null>(null);
   const [historySearch, setHistorySearch] = useState("");
+  const [waiter, setWaiter] = useState(WAITERS[0].id);
+  const [splitMode, setSplitMode] = useState(false);
+  const [split1, setSplit1] = useState("");
+  const [split2, setSplit2] = useState("");
+  const [payMethod2, setPayMethod2] = useState<PayMethod>("Card");
+  const [voidId, setVoidId] = useState<string | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [tableResOpen, setTableResOpen] = useState(false);
+  const [tableReservations, setTableReservations] = useState(INITIAL_TABLE_RES);
+  const [newTR, setNewTR] = useState({ date: "", time: "", table: "T-01", guests: "2", name: "", phone: "" });
 
   // Table management state
   const [tableStatuses, setTableStatuses] = useState<Record<string, TableStatus>>(() => {
@@ -394,6 +419,7 @@ function POS() {
           </TabsTrigger>
           <TabsTrigger value="history"><ReceiptText className="size-3.5 mr-1.5" />History</TabsTrigger>
           <TabsTrigger value="analytics"><TrendingUp className="size-3.5 mr-1.5" />Analytics</TabsTrigger>
+          <TabsTrigger value="reservations">Reservations</TabsTrigger>
         </TabsList>
 
         {/* ── NEW ORDER ──────────────────────────────────────────────────────── */}
@@ -479,6 +505,14 @@ function POS() {
                 </div>
               )}
 
+              <div className="space-y-1">
+                <Label className="text-xs">Server</Label>
+                <Select value={waiter} onValueChange={setWaiter}>
+                  <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>{WAITERS.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+
               <Separator />
 
               <div className="flex-1 min-h-[160px] max-h-[280px] overflow-y-auto space-y-2">
@@ -526,16 +560,43 @@ function POS() {
                     {taxEnabled && <div className="flex justify-between text-muted-foreground"><span>CGST 9% + SGST 9%</span><span>{fmtINR(tax)}</span></div>}
                     <div className="flex justify-between font-semibold text-base pt-1 border-t"><span>Total</span><span>{fmtINR(total)}</span></div>
                   </div>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {PAY_METHODS.map((pm) => {
-                      const Icon = pm.icon;
-                      return (
-                        <button key={pm.id} onClick={() => setPayMethod(pm.id)}
-                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition ${payMethod === pm.id ? "bg-primary text-primary-foreground border-primary" : "hover:border-primary/40"}`}>
-                          <Icon className="size-3.5" /> {pm.label}
-                        </button>
-                      );
-                    })}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <Label className="text-xs">Payment</Label>
+                      <button onClick={() => setSplitMode((v) => !v)} className={`text-[10px] px-1.5 py-0.5 rounded border transition ${splitMode ? "bg-primary/10 text-primary border-primary/40" : "text-muted-foreground hover:border-muted-foreground/40"}`}>
+                        Split
+                      </button>
+                    </div>
+                    {splitMode ? (
+                      <div className="space-y-2">
+                        <div className="flex gap-1.5 items-center">
+                          <Select value={payMethod} onValueChange={(v) => setPayMethod(v as PayMethod)}>
+                            <SelectTrigger className="h-7 text-xs flex-1"><SelectValue /></SelectTrigger>
+                            <SelectContent>{PAY_METHODS.map((pm) => <SelectItem key={pm.id} value={pm.id}>{pm.label}</SelectItem>)}</SelectContent>
+                          </Select>
+                          <Input type="number" className="h-7 w-20 text-xs" placeholder="Amt" value={split1} onChange={(e) => { setSplit1(e.target.value); setSplit2(String(total - Number(e.target.value))); }} />
+                        </div>
+                        <div className="flex gap-1.5 items-center">
+                          <Select value={payMethod2} onValueChange={(v) => setPayMethod2(v as PayMethod)}>
+                            <SelectTrigger className="h-7 text-xs flex-1"><SelectValue /></SelectTrigger>
+                            <SelectContent>{PAY_METHODS.map((pm) => <SelectItem key={pm.id} value={pm.id}>{pm.label}</SelectItem>)}</SelectContent>
+                          </Select>
+                          <Input type="number" className="h-7 w-20 text-xs" placeholder="Amt" value={split2} onChange={(e) => setSplit2(e.target.value)} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {PAY_METHODS.map((pm) => {
+                          const Icon = pm.icon;
+                          return (
+                            <button key={pm.id} onClick={() => setPayMethod(pm.id)}
+                              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition ${payMethod === pm.id ? "bg-primary text-primary-foreground border-primary" : "hover:border-primary/40"}`}>
+                              <Icon className="size-3.5" /> {pm.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <Button variant="outline" onClick={handleSendKOT} className="gap-1.5"><ChefHat className="size-4" /> Send KOT</Button>
@@ -700,9 +761,14 @@ function POS() {
                           <td className="px-4 py-3 text-right font-semibold">{fmtINR(o.total)}</td>
                           <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{o.createdAt}</td>
                           <td className="px-4 py-3">
-                            <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" onClick={() => setReceiptOrder(o)}>
-                              <Printer className="size-3" />Bill
-                            </Button>
+                            <div className="flex gap-1">
+                              <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" onClick={() => setReceiptOrder(o)}>
+                                <Printer className="size-3" />Bill
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-destructive hover:text-destructive" onClick={() => { setVoidId(o.id); setVoidReason(""); }}>
+                                <X className="size-3" />Void
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -781,7 +847,109 @@ function POS() {
             </Card>
           )}
         </TabsContent>
+
+        {/* ── TABLE RESERVATIONS ───────────────────────────────────────────── */}
+        <TabsContent value="reservations">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm text-muted-foreground">
+              {tableReservations.filter((r) => r.status === "Confirmed").length} confirmed reservations
+            </p>
+            <Button size="sm" className="gap-1.5" onClick={() => setTableResOpen(true)}><Plus className="size-4" />New Reservation</Button>
+          </div>
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    {["Date", "Time", "Table", "Guest", "Phone", "Covers", "Status", ""].map((h) => (
+                      <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableReservations.map((r) => (
+                    <tr key={r.id} className="border-b last:border-0 hover:bg-accent/5">
+                      <td className="px-4 py-3 text-xs">{r.date}</td>
+                      <td className="px-4 py-3 font-medium">{r.time}</td>
+                      <td className="px-4 py-3 font-mono text-xs">{r.table}</td>
+                      <td className="px-4 py-3">{r.name}</td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">{r.phone}</td>
+                      <td className="px-4 py-3 text-center">{r.guests}</td>
+                      <td className="px-4 py-3">
+                        <Badge className={`text-[10px] ${r.status === "Confirmed" ? "bg-success/15 text-success border-success/30" : "bg-warning/20 text-warning-foreground border-warning/30"}`}>
+                          {r.status}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 flex gap-1">
+                        {r.status === "Pending" && (
+                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+                            onClick={() => { setTableReservations((p) => p.map((x) => x.id === r.id ? { ...x, status: "Confirmed" } : x)); toast.success("Reservation confirmed"); }}>
+                            Confirm
+                          </Button>
+                        )}
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                          onClick={() => { setTableReservations((p) => p.filter((x) => x.id !== r.id)); toast.success("Reservation cancelled"); }}>
+                          Cancel
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {tableReservations.length === 0 && (
+                    <tr><td colSpan={8} className="text-center py-10 text-muted-foreground">No reservations yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </TabsContent>
+
       </Tabs>
+
+      {/* New Table Reservation Dialog */}
+      <Dialog open={tableResOpen} onOpenChange={setTableResOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Book a Table</DialogTitle></DialogHeader>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label className="text-xs">Date</Label><Input type="date" className="h-8 mt-1" value={newTR.date} onChange={(e) => setNewTR({ ...newTR, date: e.target.value })} /></div>
+            <div><Label className="text-xs">Time</Label><Input type="time" className="h-8 mt-1" value={newTR.time} onChange={(e) => setNewTR({ ...newTR, time: e.target.value })} /></div>
+            <div>
+              <Label className="text-xs">Table</Label>
+              <select className="mt-1 h-8 w-full border rounded px-2 text-sm bg-background" value={newTR.table} onChange={(e) => setNewTR({ ...newTR, table: e.target.value })}>
+                {OUTLET_TABLES.Restaurant.map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <div><Label className="text-xs">Covers</Label><Input type="number" min={1} max={12} className="h-8 mt-1" value={newTR.guests} onChange={(e) => setNewTR({ ...newTR, guests: e.target.value })} /></div>
+            <div className="col-span-2"><Label className="text-xs">Guest Name</Label><Input className="h-8 mt-1" placeholder="Full name" value={newTR.name} onChange={(e) => setNewTR({ ...newTR, name: e.target.value })} /></div>
+            <div className="col-span-2"><Label className="text-xs">Phone</Label><Input className="h-8 mt-1" placeholder="+91 …" value={newTR.phone} onChange={(e) => setNewTR({ ...newTR, phone: e.target.value })} /></div>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => setTableResOpen(false)}>Cancel</Button>
+            <Button className="flex-1" disabled={!newTR.date || !newTR.time || !newTR.name}
+              onClick={() => {
+                setTableReservations((p) => [...p, { id: `tr${Date.now()}`, date: newTR.date, time: newTR.time, table: newTR.table, guests: Number(newTR.guests), name: newTR.name, phone: newTR.phone, status: "Confirmed" }]);
+                toast.success(`Table ${newTR.table} reserved for ${newTR.name}`);
+                setTableResOpen(false);
+                setNewTR({ date: "", time: "", table: "T-01", guests: "2", name: "", phone: "" });
+              }}>Reserve</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Void Order Dialog */}
+      <Dialog open={!!voidId} onOpenChange={() => setVoidId(null)}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader><DialogTitle>Void Order</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">This will mark the order as voided. Please enter a reason.</p>
+          <Input placeholder="Reason for void (e.g. Wrong order, Guest complaint)" value={voidReason} onChange={(e) => setVoidReason(e.target.value)} />
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => setVoidId(null)}>Cancel</Button>
+            <Button variant="destructive" className="flex-1" disabled={!voidReason.trim()}
+              onClick={() => { updateOrder(voidId!, { status: "Open" }); toast.success("Order voided"); setVoidId(null); setVoidReason(""); }}>
+              Void Order
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Item note dialog */}
       <Dialog open={!!noteItemId} onOpenChange={() => setNoteItemId(null)}>
