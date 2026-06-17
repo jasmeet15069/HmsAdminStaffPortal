@@ -23,6 +23,7 @@ import {
   Search,
   ChevronDown,
   LogIn,
+  ConciergeBell,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMHMS } from "@/lib/mhms-store";
@@ -61,6 +62,7 @@ const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/reservations", label: "Reservations", icon: CalendarCheck },
   { to: "/pos", label: "POS & Restaurant", icon: UtensilsCrossed },
+  { to: "/restaurant", label: "Restaurant Mgmt", icon: ConciergeBell },
   { to: "/inventory", label: "Inventory", icon: Boxes },
   { to: "/menu-management", label: "Menu Management", icon: BookOpen },
   { to: "/front-desk", label: "Front Desk", icon: Hotel },
