@@ -296,3 +296,45 @@ export interface ApiUser {
   roles: string[];
   joined_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// POS Orders
+// ---------------------------------------------------------------------------
+
+export interface PosOrderItemApi {
+  id?: string;
+  name: string;
+  qty: number;
+  price: number;
+  note?: string;
+  seat?: number;
+  discountPct?: number;
+}
+
+export interface PosOrderApi {
+  id: string;
+  order_number: string;
+  outlet: string;
+  channel: string | null;
+  table_label: string | null;
+  room_id: string | null;
+  customer_name: string | null;
+  delivery_address: string | null;
+  status: "Open" | "Sent" | "Paid";
+  total: number;
+  items: PosOrderItemApi[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreatePosOrderBody {
+  outlet: string;
+  channel?: string | null;
+  table_label?: string | null;
+  room_id?: string | null;
+  customer_name?: string | null;
+  delivery_address?: string | null;
+  status: string;
+  total: number;
+  items: PosOrderItemApi[];
+}

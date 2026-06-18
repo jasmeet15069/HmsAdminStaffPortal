@@ -58,13 +58,23 @@ const INITIAL_NOTIFS: Notif[] = [
   { id: "n8",  icon: "📋", category: "Night Audit",   title: "Audit report ready",            body: "Night audit for 2026-06-16 has been completed and signed off.", time: "8 hrs ago", read: true },
 ];
 
-const nav = [
+type NavLeaf = { to: string; label: string; icon: typeof LayoutDashboard };
+type NavGroup = { label: string; icon: typeof LayoutDashboard; children: NavLeaf[] };
+type NavEntry = NavLeaf | NavGroup;
+
+const nav: NavEntry[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/reservations", label: "Reservations", icon: CalendarCheck },
-  { to: "/pos", label: "POS & Restaurant", icon: UtensilsCrossed },
-  { to: "/restaurant", label: "Restaurant Mgmt", icon: ConciergeBell },
+  {
+    label: "Restaurant",
+    icon: UtensilsCrossed,
+    children: [
+      { to: "/pos", label: "POS System", icon: UtensilsCrossed },
+      { to: "/restaurant", label: "Restaurant Mgmt", icon: ConciergeBell },
+      { to: "/menu-management", label: "Menu Management", icon: BookOpen },
+    ],
+  },
   { to: "/inventory", label: "Inventory", icon: Boxes },
-  { to: "/menu-management", label: "Menu Management", icon: BookOpen },
   { to: "/front-desk", label: "Front Desk", icon: Hotel },
   { to: "/housekeeping", label: "Housekeeping", icon: Sparkles },
   { to: "/revenue", label: "Revenue Mgmt", icon: TrendingUp },
@@ -94,6 +104,7 @@ export default function AppShell() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [notifs, setNotifs] = useState<Notif[]>(INITIAL_NOTIFS);
   const unreadCount = notifs.filter((n) => !n.read).length;
   const markAllRead = () => setNotifs((p) => p.map((n) => ({ ...n, read: true })));
@@ -149,6 +160,51 @@ export default function AppShell() {
         </div>
         <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
           {nav.map((n) => {
+            // Grouped (collapsible) section, e.g. Restaurant → POS / Mgmt / Menu.
+            if ("children" in n) {
+              const Icon = n.icon;
+              const childActive = n.children.some((c) => path.startsWith(c.to));
+              const expanded = openGroups[n.label] ?? childActive;
+              return (
+                <div key={n.label}>
+                  <button
+                    onClick={() => setOpenGroups((p) => ({ ...p, [n.label]: !(p[n.label] ?? childActive) }))}
+                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                      childActive
+                        ? "text-sidebar-foreground font-medium"
+                        : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground text-sidebar-foreground/85"
+                    }`}
+                  >
+                    <Icon className="size-4 shrink-0" />
+                    <span className="truncate flex-1 text-left">{n.label}</span>
+                    <ChevronDown className={`size-3.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                  </button>
+                  {expanded && (
+                    <div className="ml-4 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
+                      {n.children.map((c) => {
+                        const CIcon = c.icon;
+                        const active = path.startsWith(c.to);
+                        return (
+                          <Link
+                            key={c.to}
+                            to={c.to}
+                            className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                              active
+                                ? "bg-sidebar-primary text-sidebar-primary-foreground font-medium"
+                                : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground text-sidebar-foreground/85"
+                            }`}
+                          >
+                            <CIcon className="size-4 shrink-0" />
+                            <span className="truncate">{c.label}</span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            // Leaf link.
             const Icon = n.icon;
             const active = n.to === "/" ? path === "/" : path.startsWith(n.to);
             return (

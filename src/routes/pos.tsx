@@ -2,6 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
 import type { POSOrder, Outlet, MenuItem, OrderChannel } from "@/lib/mhms-store";
+import { useAuth } from "@/lib/api/auth";
+import { usePosOrders, useCreatePosOrder, useUpdatePosOrder } from "@/lib/api/hooks";
+import type { PosOrderApi, CreatePosOrderBody } from "@/lib/api/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -175,6 +178,48 @@ const BANQUET_STATUS_META: Record<BanquetEvent["status"], { color: string }> = {
   Cancelled:    { color: "bg-destructive/10 text-destructive border-destructive/30" },
 };
 
+// ── Live POS order mapping (API snake_case ↔ store camelCase) ───────────────────
+const mapApiOrder = (o: PosOrderApi): POSOrder => ({
+  id: o.id,
+  orderNumber: o.order_number,
+  outlet: o.outlet as Outlet,
+  channel: (o.channel ?? undefined) as OrderChannel | undefined,
+  table: o.table_label ?? undefined,
+  roomId: o.room_id ?? undefined,
+  customerName: o.customer_name ?? undefined,
+  deliveryAddress: o.delivery_address ?? undefined,
+  items: o.items,
+  status: o.status,
+  total: o.total,
+  createdAt: o.created_at,
+});
+
+const toCreateBody = (o: Omit<POSOrder, "id" | "orderNumber" | "createdAt">): CreatePosOrderBody => ({
+  outlet: o.outlet,
+  channel: o.channel ?? null,
+  table_label: o.table ?? null,
+  room_id: o.roomId ?? null,
+  customer_name: o.customerName ?? null,
+  delivery_address: o.deliveryAddress ?? null,
+  status: o.status,
+  total: o.total,
+  items: o.items,
+});
+
+const toPatchBody = (patch: Partial<POSOrder>): Record<string, unknown> => {
+  const body: Record<string, unknown> = {};
+  if (patch.status !== undefined) body.status = patch.status;
+  if (patch.total !== undefined) body.total = patch.total;
+  if (patch.items !== undefined) body.items = patch.items;
+  if (patch.table !== undefined) body.table_label = patch.table;
+  if (patch.channel !== undefined) body.channel = patch.channel;
+  if (patch.customerName !== undefined) body.customer_name = patch.customerName;
+  if (patch.deliveryAddress !== undefined) body.delivery_address = patch.deliveryAddress;
+  if (patch.roomId !== undefined) body.room_id = patch.roomId;
+  if (patch.outlet !== undefined) body.outlet = patch.outlet;
+  return body;
+};
+
 // ── KOT Receipt modal ──────────────────────────────────────────────────────────
 function KOTModal({ order, onClose }: { order: { outlet: string; table?: string; channel?: string; items: CartItem[] }; onClose: () => void }) {
   const printKOT = () => {
@@ -279,7 +324,32 @@ export const Route = createFileRoute("/pos")({
 
 // ── Main POS Component ─────────────────────────────────────────────────────────
 function POS() {
-  const { orders, addOrder, updateOrder, rooms, menuItems: allMenuItems } = useMHMS();
+  // Orders are persisted to the backend when signed in (Redis-cached list);
+  // otherwise they fall back to the in-browser demo store.
+  const authed = !!useAuth((s) => s.user);
+  const liveOrdersQ = usePosOrders();
+  const isLiveOrders = authed && !!liveOrdersQ.data;
+  const createOrderM = useCreatePosOrder();
+  const updateOrderM = useUpdatePosOrder();
+
+  const {
+    orders: storeOrders,
+    addOrder: storeAddOrder,
+    updateOrder: storeUpdateOrder,
+    rooms,
+    menuItems: allMenuItems,
+  } = useMHMS();
+
+  const orders: POSOrder[] = isLiveOrders ? (liveOrdersQ.data ?? []).map(mapApiOrder) : storeOrders;
+
+  const addOrder = (o: Omit<POSOrder, "id" | "orderNumber" | "createdAt">) => {
+    if (isLiveOrders) createOrderM.mutate(toCreateBody(o));
+    else storeAddOrder(o);
+  };
+  const updateOrder = (id: string, patch: Partial<POSOrder>) => {
+    if (isLiveOrders) updateOrderM.mutate({ id, patch: toPatchBody(patch) });
+    else storeUpdateOrder(id, patch);
+  };
 
   // ── Order state ──
   const [outlet, setOutlet] = useState<Outlet>("Restaurant");
@@ -784,7 +854,15 @@ function POS() {
   // ── Render ──
   return (
     <>
-      <PageHeader title="POS & Restaurant" description="Orders, kitchen display, table management and analytics" />
+      <PageHeader
+        title="POS & Restaurant"
+        description="Orders, kitchen display, table management and analytics"
+        actions={
+          <Badge variant={isLiveOrders ? "default" : "outline"} className="self-center">
+            {isLiveOrders ? "Live data" : "Demo data"}
+          </Badge>
+        }
+      />
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
         <Stat label="Today's Revenue"  value={fmtINR(todayRevenue)} tone="success" hint="Paid orders" />

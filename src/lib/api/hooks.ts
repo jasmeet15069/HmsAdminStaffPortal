@@ -11,6 +11,8 @@ import { apiFetch } from "./client";
 import { isAuthenticated } from "./auth";
 import type {
   ApiUser,
+  CreatePosOrderBody,
+  PosOrderApi,
   BillingFolio,
   BillingFolioDetail,
   BillingInvoice,
@@ -376,5 +378,46 @@ export function useRemoveUserRole() {
     mutationFn: ({ userId, role }: { userId: string; role: string }) =>
       apiFetch(`/api/users/${userId}/roles/${role}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// POS Orders (persisted; backend caches the list in Redis, 15s TTL)
+// ---------------------------------------------------------------------------
+
+export function usePosOrders() {
+  return useQuery({
+    queryKey: ["pos", "orders"] as const,
+    queryFn: () => apiFetch<PosOrderApi[] | null>("/api/pos/orders").then((o) => o ?? []),
+    enabled: isAuthenticated(),
+    // Near-real-time for KDS / Live Orders without hammering the DB — the
+    // backend serves cached reads between writes.
+    refetchInterval: 15_000,
+  });
+}
+
+export function useCreatePosOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreatePosOrderBody) =>
+      apiFetch<PosOrderApi>("/api/pos/orders", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pos", "orders"] }),
+  });
+}
+
+export function useUpdatePosOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
+      apiFetch<PosOrderApi>(`/api/pos/orders/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pos", "orders"] }),
+  });
+}
+
+export function useDeletePosOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/pos/orders/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pos", "orders"] }),
   });
 }
