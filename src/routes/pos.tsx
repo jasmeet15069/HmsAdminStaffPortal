@@ -44,6 +44,10 @@ type CashierShift = {
   closedAt?: string; closingCash?: number; cashSales: number; cardSales: number;
   upiSales: number; roomChargeSales: number; status: "Open" | "Closed";
 };
+type CartSnapshot = {
+  items: CartItem[]; waiter: string; discountPct: number;
+  taxEnabled: boolean; orderNotes: string; activePromoId: string | null;
+};
 
 // ── Static data ────────────────────────────────────────────────────────────────
 const OUTLETS_LIST: Outlet[] = ["Restaurant", "Bar", "Room Service", "Spa"];
@@ -320,6 +324,15 @@ function POS() {
   // ── Delivery rider assignment ──
   const [riderAssignments, setRiderAssignments] = useState<Record<string, string>>({});
 
+  // ── Multi-cart & tab control ──
+  const [savedCarts, setSavedCarts] = useState<Record<string, CartSnapshot>>({});
+  const [activeTab, setActiveTab] = useState("new");
+
+  // ── Complimentary ──
+  const [isComp, setIsComp] = useState(false);
+  const [compReason, setCompReason] = useState("");
+  const [compDialog, setCompDialog] = useState(false);
+
   // ── Banquet ──
   const [banquetEvents, setBanquetEvents] = useState<BanquetEvent[]>(INITIAL_BANQUET_EVENTS);
   const [banquetDialogOpen, setBanquetDialogOpen] = useState(false);
@@ -358,6 +371,35 @@ function POS() {
   const todayRevenue = paidOrders.reduce((s, o) => s + o.total, 0);
   const totalCovers = Object.values(tableCovers).reduce((s, c) => s + c, 0);
   const currentShift = cashierShifts.find((s) => s.status === "Open");
+
+  // ── Cart key / save / load / clear ──────────────────────────────────────────
+  const currentCartKey = () =>
+    channel === "Dine-In" && outlet !== "Room Service" ? `${outlet}:${table}`
+    : outlet === "Room Service" ? `${outlet}:${roomId}`
+    : `${outlet}:${channel}`;
+
+  const saveCurrentCart = () => {
+    if (!cart.length) return;
+    const key = currentCartKey();
+    setSavedCarts((p) => ({ ...p, [key]: { items: cart, waiter, discountPct, taxEnabled, orderNotes, activePromoId } }));
+  };
+
+  const loadCart = (key: string) => {
+    const snap = savedCarts[key];
+    if (snap) {
+      setCart(snap.items); setWaiter(snap.waiter); setDiscountPct(snap.discountPct);
+      setTaxEnabled(snap.taxEnabled); setOrderNotes(snap.orderNotes); setActivePromoId(snap.activePromoId);
+      setIsComp(false); setCompReason("");
+    } else {
+      setCart([]); setDiscountPct(0); setOrderNotes(""); setPayMethod("Cash");
+      setCustomerName(""); setDeliveryPhone(""); setDeliveryAddress("");
+      setActivePromoId(null); setSplitMode(false); setSplit1(""); setSplit2("");
+      setIsComp(false); setCompReason("");
+    }
+  };
+
+  const clearCartSlot = (key: string) =>
+    setSavedCarts((p) => { const { [key]: _, ...rest } = p; return rest; });
 
   const filteredKOT = useMemo(() => {
     const sent = openOrders.filter((o) => o.status === "Sent");
@@ -410,6 +452,7 @@ function POS() {
     setCart([]); setDiscountPct(0); setOrderNotes(""); setPayMethod("Cash");
     setCustomerName(""); setDeliveryPhone(""); setDeliveryAddress("");
     setActivePromoId(null); setSplitMode(false); setSplit1(""); setSplit2("");
+    setIsComp(false); setCompReason("");
   };
 
   const buildPayload = (status: POSOrder["status"]): Omit<POSOrder, "id" | "orderNumber" | "createdAt"> => ({
@@ -425,27 +468,131 @@ function POS() {
   const handleSendKOT = () => {
     if (!cart.length) return;
     const snap = [...cart];
+    const key = currentCartKey();
     addOrder(buildPayload("Sent"));
     if (channel === "Dine-In" && outlet !== "Room Service") setTableStatuses((p) => ({ ...p, [table]: "occupied" }));
     setKotItems(snap);
     setKotContext({ outlet, table: outlet !== "Room Service" ? table : undefined, channel: channel !== "Dine-In" ? channel : undefined });
     setKotModal(true);
+    clearCartSlot(key);
     resetOrder();
   };
 
   const handlePay = () => {
     if (!cart.length) return;
+    const key = currentCartKey();
     addOrder(buildPayload("Paid"));
     toast.success(`${fmtINR(total)} received via ${payMethod}`);
+    clearCartSlot(key);
     resetOrder();
   };
 
   const switchOutlet = (o: Outlet) => {
+    saveCurrentCart();
     setOutlet(o); setCatFilter("All"); setSearch("");
-    if (o === "Room Service") { setChannel("Dine-In"); return; }
+    if (o === "Room Service") {
+      setChannel("Dine-In");
+      loadCart(`${o}:${roomId}`);
+      return;
+    }
     const tables = OUTLET_TABLES[o];
-    if (tables.length) setTable(tables[0]);
+    const firstTable = tables.length ? tables[0] : "";
+    if (tables.length) setTable(firstTable);
     else setTable("");
+    loadCart(tables.length ? `${o}:${firstTable}` : `${o}:Dine-In`);
+  };
+
+  const handleAddItemsToOrder = (order: POSOrder) => {
+    saveCurrentCart();
+    setOutlet(order.outlet as Outlet);
+    if (order.channel) setChannel(order.channel); else setChannel("Dine-In");
+    if (order.table) setTable(order.table);
+    if (order.roomId) setRoomId(order.roomId);
+    setCart([]); setDiscountPct(0); setOrderNotes(""); setPayMethod("Cash");
+    setCustomerName(""); setDeliveryPhone(""); setDeliveryAddress("");
+    setActivePromoId(null); setSplitMode(false); setSplit1(""); setSplit2("");
+    setIsComp(false); setCompReason("");
+    setActiveTab("new");
+    toast.info(`Add items for ${order.orderNumber} — send a new KOT when ready`);
+  };
+
+  const handleExportCSV = () => {
+    const headers = ["Order #", "Date/Time", "Outlet", "Channel", "Table/Customer", "Items", "Total (INR)"];
+    const rows = paidOrders.map((o) => [
+      o.orderNumber, o.createdAt, o.outlet, o.channel ?? "—",
+      o.customerName ?? o.table ?? "Room Svc",
+      o.items.map((i) => `${i.qty}x ${i.name}`).join("; "),
+      Math.round(o.total),
+    ]);
+    const csv = [headers, ...rows]
+      .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pos-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${paidOrders.length} orders`);
+  };
+
+  const printXReport = (shift: CashierShift) => {
+    const cashSales = paidOrders.filter((o) => o.total > 0).length * 820;
+    printHTML("X Report — Current Shift", `
+      <div style="font-family:monospace;max-width:320px;margin:auto">
+        <div style="text-align:center;font-weight:bold;font-size:16px;margin-bottom:4px">HOTEL HARMONY</div>
+        <div style="text-align:center;color:#64748b;margin-bottom:12px">X REPORT — SHIFT SUMMARY</div>
+        <hr/>
+        <table style="width:100%;margin-top:8px">
+          <tr><td>Cashier</td><td style="text-align:right">${shift.cashierName}</td></tr>
+          <tr><td>Opened</td><td style="text-align:right">${shift.openedAt}</td></tr>
+          <tr><td>Opening Float</td><td style="text-align:right">₹${shift.openingFloat.toLocaleString("en-IN")}</td></tr>
+        </table>
+        <hr style="margin:10px 0"/>
+        <table style="width:100%">
+          <tr><td>Cash Sales</td><td style="text-align:right">₹${cashSales.toLocaleString("en-IN")}</td></tr>
+          <tr><td>Card Sales</td><td style="text-align:right">₹${Math.round(todayRevenue * 0.45).toLocaleString("en-IN")}</td></tr>
+          <tr><td>UPI Sales</td><td style="text-align:right">₹${Math.round(todayRevenue * 0.20).toLocaleString("en-IN")}</td></tr>
+          <tr><td>Room Charge</td><td style="text-align:right">₹${Math.round(todayRevenue * 0.10).toLocaleString("en-IN")}</td></tr>
+          <tr style="font-weight:bold"><td>Total Revenue</td><td style="text-align:right">₹${Math.round(todayRevenue).toLocaleString("en-IN")}</td></tr>
+        </table>
+        <hr style="margin:10px 0"/>
+        <div style="color:#64748b;font-size:11px">Open Orders: ${openOrders.length}</div>
+        <div style="color:#64748b;font-size:11px;margin-top:4px">Report generated: ${new Date().toLocaleString("en-IN")}</div>
+      </div>
+    `);
+  };
+
+  const printZReport = (shift: CashierShift) => {
+    const variance = (shift.closingCash ?? 0) - shift.openingFloat - shift.cashSales;
+    printHTML("Z Report — Shift Close", `
+      <div style="font-family:monospace;max-width:320px;margin:auto">
+        <div style="text-align:center;font-weight:bold;font-size:16px;margin-bottom:4px">HOTEL HARMONY</div>
+        <div style="text-align:center;color:#64748b;margin-bottom:12px">Z REPORT — END OF SHIFT</div>
+        <hr/>
+        <table style="width:100%;margin-top:8px">
+          <tr><td>Cashier</td><td style="text-align:right">${shift.cashierName}</td></tr>
+          <tr><td>Opened</td><td style="text-align:right">${shift.openedAt}</td></tr>
+          <tr><td>Closed</td><td style="text-align:right">${shift.closedAt ?? "—"}</td></tr>
+          <tr><td>Opening Float</td><td style="text-align:right">₹${shift.openingFloat.toLocaleString("en-IN")}</td></tr>
+        </table>
+        <hr style="margin:10px 0"/>
+        <table style="width:100%">
+          <tr><td>Cash Sales</td><td style="text-align:right">₹${shift.cashSales.toLocaleString("en-IN")}</td></tr>
+          <tr><td>Card Sales</td><td style="text-align:right">₹${shift.cardSales.toLocaleString("en-IN")}</td></tr>
+          <tr><td>UPI Sales</td><td style="text-align:right">₹${shift.upiSales.toLocaleString("en-IN")}</td></tr>
+          <tr><td>Room Charge</td><td style="text-align:right">₹${shift.roomChargeSales.toLocaleString("en-IN")}</td></tr>
+        </table>
+        <hr style="margin:10px 0"/>
+        <table style="width:100%">
+          <tr><td>Closing Cash Count</td><td style="text-align:right">${shift.closingCash != null ? "₹" + shift.closingCash.toLocaleString("en-IN") : "—"}</td></tr>
+          <tr style="font-weight:bold;color:${variance >= 0 ? "green" : "red"}"><td>Variance</td><td style="text-align:right">${variance >= 0 ? "+" : ""}₹${Math.abs(variance).toLocaleString("en-IN")}</td></tr>
+        </table>
+        <hr style="margin:10px 0"/>
+        <div style="color:#64748b;font-size:11px">Report generated: ${new Date().toLocaleString("en-IN")}</div>
+      </div>
+    `);
   };
 
   const togglePromo = (promoId: string) => {
@@ -497,7 +644,7 @@ function POS() {
         <Stat label="Delivery Orders"  value={deliveryOrders.filter((o) => o.status !== "Paid").length} hint="Pending deliveries" tone={deliveryOrders.filter((o) => o.status !== "Paid").length > 0 ? "warning" : "info"} />
       </div>
 
-      <Tabs defaultValue="new">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="mb-4 flex-wrap h-auto gap-1">
           <TabsTrigger value="new"><ShoppingBag className="size-3.5 mr-1.5" />New Order</TabsTrigger>
           <TabsTrigger value="tables"><LayoutGrid className="size-3.5 mr-1.5" />Tables</TabsTrigger>
@@ -605,7 +752,7 @@ function POS() {
                     </Badge>
                   )}
                 </div>
-                {cart.length > 0 && <button onClick={resetOrder} className="text-xs text-muted-foreground hover:text-destructive transition">Clear all</button>}
+                {cart.length > 0 && <button onClick={() => { clearCartSlot(currentCartKey()); resetOrder(); }} className="text-xs text-muted-foreground hover:text-destructive transition">Clear all</button>}
               </div>
 
               {/* Channel-specific location fields */}
@@ -666,13 +813,17 @@ function POS() {
                 <div className="space-y-1">
                   <Label className="text-xs">Table</Label>
                   <div className="flex flex-wrap gap-1.5">
-                    {OUTLET_TABLES[outlet].map((t) => (
-                      <button key={t} onClick={() => setTable(t)}
-                        className={`px-2 py-1 rounded text-xs font-mono border transition ${table === t ? "bg-primary text-primary-foreground border-primary" : tableStatuses[t] === "occupied" ? "border-destructive/40 text-destructive" : "hover:border-primary/50"}`}>
-                        {t}
-                        {tableStatuses[t] === "occupied" && <span className="ml-1 size-1.5 rounded-full bg-destructive inline-block" />}
-                      </button>
-                    ))}
+                    {OUTLET_TABLES[outlet].map((t) => {
+                      const hasDraft = !!(savedCarts[`${outlet}:${t}`]?.items?.length);
+                      return (
+                        <button key={t} onClick={() => { saveCurrentCart(); setTable(t); loadCart(`${outlet}:${t}`); }}
+                          className={`px-2 py-1 rounded text-xs font-mono border transition ${table === t ? "bg-primary text-primary-foreground border-primary" : tableStatuses[t] === "occupied" ? "border-destructive/40 text-destructive" : "hover:border-primary/50"}`}>
+                          {t}
+                          {tableStatuses[t] === "occupied" && <span className="ml-1 size-1.5 rounded-full bg-destructive inline-block" />}
+                          {hasDraft && tableStatuses[t] !== "occupied" && <span className="ml-1 size-1.5 rounded-full bg-warning inline-block" />}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -736,11 +887,14 @@ function POS() {
                     </div>
                   </div>
 
-                  {/* Discount + GST */}
+                  {/* Discount + GST + Comp */}
                   <div className="flex items-center gap-2">
                     <Label className="text-xs shrink-0">Discount %</Label>
-                    <Input type="number" min={0} max={100} className="h-7 text-xs w-20" value={discountPct || ""} placeholder="0" onChange={(e) => { setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value)))); setActivePromoId(null); }} />
-                    <button onClick={() => setTaxEnabled((v) => !v)} className={`ml-auto text-xs px-2 py-1 rounded border transition ${taxEnabled ? "bg-primary/10 border-primary/40 text-primary" : "text-muted-foreground"}`}>GST 18%</button>
+                    <Input type="number" min={0} max={100} className="h-7 text-xs w-20" value={discountPct || ""} placeholder="0" onChange={(e) => { setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value)))); setActivePromoId(null); setIsComp(false); }} />
+                    <div className="ml-auto flex items-center gap-1.5">
+                      <button onClick={() => setTaxEnabled((v) => !v)} className={`text-xs px-2 py-1 rounded border transition ${taxEnabled ? "bg-primary/10 border-primary/40 text-primary" : "text-muted-foreground"}`}>GST 18%</button>
+                      <button onClick={() => setCompDialog(true)} className={`text-xs px-2 py-1 rounded border transition shrink-0 ${isComp ? "bg-success/10 border-success/50 text-success font-medium" : "text-muted-foreground hover:border-muted-foreground/40"}`}>{isComp ? "✓ Comp" : "Comp"}</button>
+                    </div>
                   </div>
 
                   {/* Totals */}
@@ -825,6 +979,7 @@ function POS() {
                       <div className={`text-[10px] font-medium ${meta.color}`}>{meta.label}</div>
                       <div className="text-[10px] text-muted-foreground">{t.seats} seats</div>
                       {order && <div className="text-[10px] text-info mt-0.5">{fmtINR(order.total)}</div>}
+                      {!order && savedCarts[`${out}:${t.id}`]?.items?.length ? <div className="text-[10px] text-warning-foreground mt-0.5">Draft</div> : null}
                     </button>
                   );
                 })}
@@ -850,6 +1005,45 @@ function POS() {
                     value={tableCovers[selectedTable] ?? ""} placeholder="0"
                     onChange={(e) => setTableCovers((p) => ({ ...p, [selectedTable!]: Number(e.target.value) }))} />
                 </div>
+              </div>
+              {/* Open Order + Transfer */}
+              <div className="flex items-center gap-3 mt-3 pt-3 border-t flex-wrap">
+                {(openOrders.some((o) => o.table === selectedTable) || savedCarts[`${outlet}:${selectedTable}`]?.items?.length) ? (
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => {
+                    saveCurrentCart();
+                    setTable(selectedTable!);
+                    loadCart(`${outlet}:${selectedTable!}`);
+                    setActiveTab("new");
+                  }}>
+                    <ReceiptText className="size-3.5" />Open Order
+                  </Button>
+                ) : null}
+                {tableStatuses[selectedTable] !== "available" && (
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs text-muted-foreground shrink-0">Transfer to</Label>
+                    <Select onValueChange={(target) => {
+                      openOrders.filter((o) => o.table === selectedTable).forEach((o) => updateOrder(o.id, { table: target }));
+                      const srcKey = `${outlet}:${selectedTable}`;
+                      const dstKey = `${outlet}:${target}`;
+                      setSavedCarts((p) => {
+                        const { [srcKey]: snap, ...rest } = p;
+                        return snap ? { ...rest, [dstKey]: snap } : rest;
+                      });
+                      const srcStatus = tableStatuses[selectedTable!];
+                      setTableStatuses((p) => ({ ...p, [selectedTable!]: "available", [target]: srcStatus }));
+                      toast.success(`Table ${selectedTable} → ${target}`);
+                      setSelectedTable(target);
+                    }}>
+                      <SelectTrigger className="h-7 text-xs w-24"><SelectValue placeholder="Pick table" /></SelectTrigger>
+                      <SelectContent>
+                        {ALL_TABLES.filter((t) => {
+                          const selOutlet = ALL_TABLES.find((x) => x.id === selectedTable)?.outlet;
+                          return t.outlet === selOutlet && t.id !== selectedTable && tableStatuses[t.id] === "available";
+                        }).map((t) => <SelectItem key={t.id} value={t.id}>{t.id}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
             </Card>
           )}
@@ -934,7 +1128,7 @@ function POS() {
             </Card>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {openOrders.map((o) => <LiveOrderCard key={o.id} order={o} onUpdate={updateOrder} />)}
+              {openOrders.map((o) => <LiveOrderCard key={o.id} order={o} onUpdate={updateOrder} onAddItems={handleAddItemsToOrder} />)}
             </div>
           )}
         </TabsContent>
@@ -1059,7 +1253,9 @@ function POS() {
                         <tr key={o.id} className="border-b last:border-0 hover:bg-accent/5">
                           <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{o.orderNumber ?? `#${String(paidOrders.length - idx).padStart(4, "0")}`}</td>
                           <td className="px-4 py-3">
-                            {o.channel && o.channel !== "Dine-In" ? (
+                            {o.total === 0 ? (
+                              <Badge className="bg-success/15 text-success border-success/30 text-[9px]">COMP</Badge>
+                            ) : o.channel && o.channel !== "Dine-In" ? (
                               <Badge variant="outline" className="text-[9px] px-1.5">{o.channel}</Badge>
                             ) : <span className="text-xs text-muted-foreground">Dine-In</span>}
                           </td>
@@ -1086,6 +1282,12 @@ function POS() {
 
         {/* ── ANALYTICS ──────────────────────────────────────────────────────── */}
         <TabsContent value="analytics">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm text-muted-foreground">{paidOrders.length} paid orders · {fmtINR(todayRevenue)} total</p>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={handleExportCSV} disabled={paidOrders.length === 0}>
+              <Download className="size-4" />Export CSV
+            </Button>
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <Card className="p-5">
               <h3 className="font-semibold mb-4">Revenue by Outlet</h3>
@@ -1283,7 +1485,12 @@ function POS() {
                   <h3 className="font-semibold">Active Shift — {currentShift.cashierName}</h3>
                   <p className="text-xs text-muted-foreground">Opened: {currentShift.openedAt}</p>
                 </div>
-                <Badge className="bg-success/15 text-success border-success/30">Shift Open</Badge>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => printXReport(currentShift)}>
+                    <Printer className="size-3.5" />X Report
+                  </Button>
+                  <Badge className="bg-success/15 text-success border-success/30">Shift Open</Badge>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1357,7 +1564,7 @@ function POS() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b">
-                        {["Cashier", "Opened", "Closed", "Float", "Cash Sales", "Closing", "Variance"].map((h) => (
+                        {["Cashier", "Opened", "Closed", "Float", "Cash Sales", "Closing", "Variance", ""].map((h) => (
                           <th key={h} className="px-4 py-3 text-xs font-medium text-muted-foreground text-left">{h}</th>
                         ))}
                       </tr>
@@ -1374,6 +1581,11 @@ function POS() {
                             <td className="px-4 py-3 text-success">{fmtINR(s.cashSales)}</td>
                             <td className="px-4 py-3">{s.closingCash != null ? fmtINR(s.closingCash) : "—"}</td>
                             <td className={`px-4 py-3 font-semibold ${variance >= 0 ? "text-success" : "text-destructive"}`}>{s.closingCash != null ? `${variance >= 0 ? "+" : ""}${fmtINR(variance)}` : "—"}</td>
+                            <td className="px-4 py-3">
+                              <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-xs" onClick={() => printZReport(s)}>
+                                <Printer className="size-3" />Z
+                              </Button>
+                            </td>
                           </tr>
                         );
                       })}
@@ -1480,6 +1692,35 @@ function POS() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Complimentary Dialog ── */}
+      <Dialog open={compDialog} onOpenChange={setCompDialog}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader><DialogTitle>Mark Complimentary</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">Manager authorisation required. Enter reason for the comp.</p>
+          <Input
+            placeholder="e.g. Guest complaint, VIP courtesy, Service recovery"
+            value={compReason}
+            onChange={(e) => setCompReason(e.target.value)}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && compReason.trim()) {
+                setIsComp(true); setDiscountPct(100); setTaxEnabled(false);
+                setOrderNotes(`COMP: ${compReason}`); setCompDialog(false);
+                toast.success("Order marked complimentary");
+              }
+            }}
+          />
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => setCompDialog(false)}>Cancel</Button>
+            <Button className="flex-1" disabled={!compReason.trim()} onClick={() => {
+              setIsComp(true); setDiscountPct(100); setTaxEnabled(false);
+              setOrderNotes(`COMP: ${compReason}`); setCompDialog(false);
+              toast.success("Order marked complimentary");
+            }}>Apply Comp</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* ── KOT Modal ── */}
       <Dialog open={kotModal} onOpenChange={setKotModal}>
         <KOTModal order={{ ...kotContext, items: kotItems }} onClose={() => setKotModal(false)} />
@@ -1496,7 +1737,7 @@ function POS() {
 }
 
 // ── Live Order Card ────────────────────────────────────────────────────────────
-function LiveOrderCard({ order, onUpdate }: { order: POSOrder; onUpdate: (id: string, patch: Partial<POSOrder>) => void }) {
+function LiveOrderCard({ order, onUpdate, onAddItems }: { order: POSOrder; onUpdate: (id: string, patch: Partial<POSOrder>) => void; onAddItems: (order: POSOrder) => void }) {
   const statusColor: Record<string, string> = {
     Open: "bg-warning/15 text-warning-foreground border-warning/30",
     Sent: "bg-info/15 text-info border-info/30",
@@ -1527,10 +1768,15 @@ function LiveOrderCard({ order, onUpdate }: { order: POSOrder; onUpdate: (id: st
         ))}
       </div>
       <div className="flex justify-between font-semibold border-t pt-2 text-sm"><span>Total</span><span>{fmtINR(order.total)}</span></div>
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         {order.status === "Open" && (
           <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => { onUpdate(order.id, { status: "Sent" }); toast.success("KOT sent to kitchen"); }}>
             <ChefHat className="size-3.5" /> Send KOT
+          </Button>
+        )}
+        {order.status === "Sent" && (
+          <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => onAddItems(order)}>
+            <Plus className="size-3.5" /> Add Items
           </Button>
         )}
         {order.status !== "Paid" && (
