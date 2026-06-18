@@ -118,7 +118,7 @@ export interface POSOrder {
   roomId?: string;
   customerName?: string;
   deliveryAddress?: string;
-  items: { name: string; qty: number; price: number; note?: string }[];
+  items: { name: string; qty: number; price: number; note?: string; seat?: number; discountPct?: number }[];
   status: "Open" | "Sent" | "Paid";
   total: number;
   createdAt: string;

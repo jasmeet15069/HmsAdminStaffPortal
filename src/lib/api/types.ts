@@ -170,3 +170,127 @@ export interface CreateRoomInput {
   status?: RoomStatus;
   amenities?: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Billing
+// ---------------------------------------------------------------------------
+
+export interface BillingFolio {
+  id: string;
+  booking_id: string;
+  guest_id: string;
+  status: string;
+  currency: string;
+  guest_name: string;
+  room_id?: string;
+  room_number: string;
+  total_charges: number;
+  total_paid: number;
+  balance: number;
+  created_at: string;
+  closed_at?: string;
+}
+
+export interface BillingCharge {
+  id: string;
+  folio_id: string;
+  description: string;
+  charge_type?: string;
+  amount: number;
+  tax_amount: number;
+  posted_at: string;
+}
+
+export interface BillingPaymentItem {
+  id: string;
+  payment_number: string;
+  amount: number;
+  method: string;
+  status: string;
+  notes?: string;
+  created_at: string;
+}
+
+export interface BillingFolioDetail extends BillingFolio {
+  total_tax: number;
+  charges: BillingCharge[];
+  payments: BillingPaymentItem[];
+}
+
+export interface BillingInvoice {
+  id: string;
+  folio_id: string;
+  invoice_number: string;
+  status: string;
+  subtotal: number;
+  tax_total: number;
+  total: number;
+  currency: string;
+  notes?: string;
+  guest_name: string;
+  created_at: string;
+  sent_at?: string;
+  paid_at?: string;
+}
+
+export interface BillingTransaction {
+  id: string;
+  payment_number: string;
+  amount: number;
+  payment_method: string;
+  status: string;
+  notes?: string;
+  guest_name: string;
+  room_number: string;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Night Audit
+// ---------------------------------------------------------------------------
+
+export interface NightAuditChecklistItem {
+  task: string;
+  completed: boolean;
+}
+
+export interface NightAuditRevenueItem {
+  category: string;
+  expected: number;
+  actual: number;
+  difference: number;
+}
+
+export interface NightAuditReport {
+  id: string;
+  audit_date: string;
+  status: string;
+  closed_by?: string;
+  created_at: string;
+}
+
+export interface CloseDayResponse {
+  report_id: string;
+  audit_date: string;
+  status: string;
+  summary: {
+    total_revenue: number;
+    total_tax: number;
+    occupied_rooms: number;
+    check_outs: number;
+    arrivals: number;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Users
+// ---------------------------------------------------------------------------
+
+export interface ApiUser {
+  id: string;
+  email: string;
+  full_name: string;
+  phone?: string;
+  roles: string[];
+  joined_at: string;
+}

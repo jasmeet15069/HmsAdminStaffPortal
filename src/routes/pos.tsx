@@ -28,11 +28,15 @@ import { toast } from "sonner";
 import { printHTML } from "@/lib/csv";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type CartItem = { id: string; name: string; qty: number; price: number; note?: string };
+type CartItem = { id: string; name: string; qty: number; price: number; note?: string; seat?: number; discountPct?: number };
 type PayMethod = typeof PAY_METHODS[number]["id"];
 type TableStatus = "available" | "occupied" | "reserved" | "cleaning";
 type KitchenStation = "All" | "Tandoor" | "Grill" | "Fry" | "Pantry" | "Bar" | "Dessert";
 type Promotion = { id: string; name: string; type: "happy_hour" | "bogo" | "flat" | "combo"; desc: string; discountPct: number; condition?: string };
+type KdsStage = "new" | "accepted" | "preparing" | "ready" | "served";
+type RefundRecord = { type: "refund" | "credit_note"; amount: number; reason: string; approver: string; at: string; partial: boolean };
+// Loose item shape shared by stored orders (no required `id`), used by split/merge.
+type OrderItem = { name: string; qty: number; price: number; note?: string; seat?: number; discountPct?: number };
 type BanquetEvent = {
   id: string; name: string; date: string; time: string; hall: string;
   covers: number; contactName: string; phone: string; package: string;
@@ -118,7 +122,21 @@ const PROMOTIONS: Promotion[] = [
   { id: "promo2", name: "BOGO Starters",   type: "bogo",       desc: "Buy 1 Get 1 on all Starters",     discountPct: 50, condition: "Starter items" },
   { id: "promo3", name: "Corporate 15%",   type: "flat",       desc: "15% off for corporate bookings",  discountPct: 15 },
   { id: "promo4", name: "Weekend Special", type: "flat",       desc: "10% weekend dining discount",     discountPct: 10, condition: "Sat & Sun" },
+  { id: "promo5", name: "Combo Meal",      type: "combo",      desc: "2 Mains + 1 Beverage — 15% off",  discountPct: 15, condition: "2 Main + 1 Beverage" },
 ];
+
+// GST slabs (India). CGST/SGST split applies intra-state; IGST inter-state.
+const GST_RATES = [0, 5, 12, 18, 28];
+// Manager authorisation PIN for refunds / credit notes (demo).
+const MANAGER_PIN = "1234";
+
+const KDS_STAGE_META: Record<KdsStage, { label: string; next?: KdsStage; action?: string; color: string; ring: string }> = {
+  new:       { label: "New",         next: "accepted",  action: "Accept",     color: "bg-warning/15 text-warning-foreground border-warning/30",  ring: "border-warning bg-warning/5" },
+  accepted:  { label: "Accepted",    next: "preparing", action: "Start Prep", color: "bg-info/15 text-info border-info/30",                       ring: "border-info bg-info/5" },
+  preparing: { label: "Preparing",   next: "ready",     action: "Mark Ready", color: "bg-primary/15 text-primary border-primary/30",             ring: "border-primary bg-primary/5" },
+  ready:     { label: "Ready",       next: "served",    action: "Serve",      color: "bg-success/15 text-success border-success/30",             ring: "border-success bg-success/5" },
+  served:    { label: "Served",      color: "bg-muted text-muted-foreground border-border",                                                       ring: "border-border" },
+};
 
 const BANQUET_HALLS = ["Grand Ballroom", "Crystal Hall", "Garden Terrace", "Conference Room"];
 
@@ -333,6 +351,33 @@ function POS() {
   const [compReason, setCompReason] = useState("");
   const [compDialog, setCompDialog] = useState(false);
 
+  // ── Billing & tax depth ──
+  const [gstRate, setGstRate] = useState(18);
+  const [taxMode, setTaxMode] = useState<"gst" | "igst">("gst");
+  const [serviceChargePct, setServiceChargePct] = useState(0);
+  const [discItemId, setDiscItemId] = useState<string | null>(null);
+  const [discPctInput, setDiscPctInput] = useState("");
+  const [activeSeat, setActiveSeat] = useState(0); // 0 = unassigned
+
+  // ── KDS multi-stage ──
+  const [kdsStages, setKdsStages] = useState<Record<string, KdsStage>>({});
+  const [itemBumps, setItemBumps] = useState<Record<string, string[]>>({});
+
+  // ── Refunds / credit notes (manager-gated) ──
+  const [refunds, setRefunds] = useState<Record<string, RefundRecord>>({});
+  const [refundDialog, setRefundDialog] = useState<{ orderId: string; type: "refund" | "credit_note" } | null>(null);
+  const [refundReason, setRefundReason] = useState("");
+  const [refundAmount, setRefundAmount] = useState("");
+  const [mgrName, setMgrName] = useState("");
+  const [mgrPin, setMgrPin] = useState("");
+
+  // ── Table split / merge ──
+  const [splitDialog, setSplitDialog] = useState(false);
+  const [splitSel, setSplitSel] = useState<Record<number, boolean>>({});
+  const [splitTarget, setSplitTarget] = useState("");
+  const [mergeDialog, setMergeDialog] = useState(false);
+  const [mergeTargets, setMergeTargets] = useState<string[]>([]);
+
   // ── Banquet ──
   const [banquetEvents, setBanquetEvents] = useState<BanquetEvent[]>(INITIAL_BANQUET_EVENTS);
   const [banquetDialogOpen, setBanquetDialogOpen] = useState(false);
@@ -360,10 +405,14 @@ function POS() {
   };
 
   const subtotal = cart.reduce((s, i) => s + i.qty * i.price, 0);
-  const discountAmt = Math.round(subtotal * discountPct / 100);
-  const afterDiscount = subtotal - discountAmt;
-  const tax = taxEnabled ? Math.round(afterDiscount * 0.18) : 0;
-  const total = afterDiscount + tax;
+  const itemDiscountAmt = Math.round(cart.reduce((s, i) => s + i.qty * i.price * ((i.discountPct ?? 0) / 100), 0));
+  const afterItemDisc = subtotal - itemDiscountAmt;
+  const discountAmt = Math.round(afterItemDisc * discountPct / 100); // order-level discount
+  const afterDiscount = afterItemDisc - discountAmt;
+  const serviceCharge = Math.round(afterDiscount * serviceChargePct / 100);
+  const taxableBase = afterDiscount + serviceCharge;
+  const tax = taxEnabled ? Math.round(taxableBase * gstRate / 100) : 0;
+  const total = taxableBase + tax;
 
   const openOrders = orders.filter((o) => o.status !== "Paid");
   const paidOrders = orders.filter((o) => o.status === "Paid");
@@ -402,10 +451,10 @@ function POS() {
     setSavedCarts((p) => { const { [key]: _, ...rest } = p; return rest; });
 
   const filteredKOT = useMemo(() => {
-    const sent = openOrders.filter((o) => o.status === "Sent");
+    const sent = openOrders.filter((o) => o.status === "Sent" && (kdsStages[o.id] ?? "new") !== "served");
     if (kdsStation === "All") return sent;
     return sent.filter((o) => o.items.some((i) => getItemStation(i.name) === kdsStation));
-  }, [openOrders, kdsStation, allMenuItems]);
+  }, [openOrders, kdsStation, allMenuItems, kdsStages]);
 
   // ── Analytics ──
   const revenueByOutlet = useMemo(() => {
@@ -631,6 +680,107 @@ function POS() {
     setClosingCash("");
   };
 
+  // ── KDS multi-stage ──────────────────────────────────────────────────────────
+  const kdsStageOf = (id: string): KdsStage => kdsStages[id] ?? "new";
+
+  const advanceKds = (id: string) => {
+    const cur = kdsStageOf(id);
+    const next = KDS_STAGE_META[cur].next;
+    if (!next) return;
+    setKdsStages((p) => ({ ...p, [id]: next }));
+    if (next === "served") toast.success("Order served");
+    else toast.success(`Ticket → ${KDS_STAGE_META[next].label}`);
+  };
+
+  const toggleItemBump = (orderId: string, itemName: string) =>
+    setItemBumps((p) => {
+      const cur = p[orderId] ?? [];
+      return { ...p, [orderId]: cur.includes(itemName) ? cur.filter((n) => n !== itemName) : [...cur, itemName] };
+    });
+
+  // ── Item-level discount ──────────────────────────────────────────────────────
+  const applyItemDiscount = () => {
+    if (!discItemId) return;
+    const pct = Math.min(100, Math.max(0, Number(discPctInput) || 0));
+    setCart((prev) => prev.map((c) => c.id === discItemId ? { ...c, discountPct: pct || undefined } : c));
+    setDiscItemId(null); setDiscPctInput("");
+    toast.success(pct ? `${pct}% off item applied` : "Item discount cleared");
+  };
+
+  // ── Refunds / credit notes ───────────────────────────────────────────────────
+  const openRefund = (orderId: string, type: "refund" | "credit_note") => {
+    const order = orders.find((o) => o.id === orderId);
+    setRefundDialog({ orderId, type });
+    setRefundAmount(order ? String(order.total) : "");
+    setRefundReason(""); setMgrName(""); setMgrPin("");
+  };
+
+  const confirmRefund = () => {
+    if (!refundDialog) return;
+    const order = orders.find((o) => o.id === refundDialog.orderId);
+    if (!order) return;
+    if (mgrPin !== MANAGER_PIN) { toast.error("Invalid manager PIN"); return; }
+    if (!mgrName.trim()) { toast.error("Manager name required"); return; }
+    if (!refundReason.trim()) { toast.error("Reason required"); return; }
+    const amt = Math.min(order.total, Math.max(0, Number(refundAmount) || 0));
+    setRefunds((p) => ({
+      ...p,
+      [refundDialog.orderId]: {
+        type: refundDialog.type, amount: amt, reason: refundReason.trim(),
+        approver: mgrName.trim(), at: new Date().toLocaleString("en-IN"),
+        partial: amt < order.total,
+      },
+    }));
+    toast.success(`${refundDialog.type === "refund" ? "Refund" : "Credit note"} of ${fmtINR(amt)} approved`);
+    setRefundDialog(null); setRefundReason(""); setRefundAmount(""); setMgrName(""); setMgrPin("");
+  };
+
+  // ── Table split / merge ──────────────────────────────────────────────────────
+  const tableOrders = (tableId: string) => openOrders.filter((o) => o.table === tableId);
+
+  const tableItemRows = (tableId: string): OrderItem[] => {
+    const rows: OrderItem[] = [];
+    tableOrders(tableId).forEach((o) => o.items.forEach((i) => rows.push(i)));
+    return rows;
+  };
+
+  const doSplit = () => {
+    if (!selectedTable || !splitTarget) return;
+    const rows = tableItemRows(selectedTable);
+    const moving = rows.filter((_, idx) => splitSel[idx]);
+    if (!moving.length) { toast.error("Select at least one item to move"); return; }
+    const keep = rows.filter((_, idx) => !splitSel[idx]);
+    const recalc = (items: OrderItem[]) => Math.round(items.reduce((s, i) => s + i.qty * i.price * (1 - (i.discountPct ?? 0) / 100), 0) * 1.18);
+    // Collapse the source table's open orders into a single remaining order.
+    const srcOrders = tableOrders(selectedTable);
+    const primary = srcOrders[0];
+    if (primary) updateOrder(primary.id, { items: keep, total: recalc(keep) });
+    srcOrders.slice(1).forEach((o) => updateOrder(o.id, { items: [], total: 0, status: "Paid" }));
+    addOrder({ outlet, channel: channel === "Dine-In" ? undefined : channel, table: splitTarget, items: moving, status: "Sent", total: recalc(moving) });
+    setTableStatuses((p) => ({ ...p, [splitTarget]: "occupied", ...(keep.length ? {} : { [selectedTable]: "available" }) }));
+    toast.success(`Split ${moving.length} item(s) → ${splitTarget}`);
+    setSplitDialog(false); setSplitSel({}); setSplitTarget("");
+  };
+
+  const doMerge = () => {
+    if (!selectedTable || !mergeTargets.length) return;
+    const primary = tableOrders(selectedTable)[0];
+    const recalc = (items: OrderItem[]) => Math.round(items.reduce((s, i) => s + i.qty * i.price * (1 - (i.discountPct ?? 0) / 100), 0) * 1.18);
+    const mergedItems: OrderItem[] = [...tableItemRows(selectedTable)];
+    mergeTargets.forEach((t) => {
+      tableOrders(t).forEach((o) => {
+        mergedItems.push(...o.items);
+        updateOrder(o.id, { items: [], total: 0, status: "Paid" });
+      });
+    });
+    if (primary) updateOrder(primary.id, { items: mergedItems, total: recalc(mergedItems) });
+    else if (mergedItems.length) addOrder({ outlet, channel: channel === "Dine-In" ? undefined : channel, table: selectedTable, items: mergedItems, status: "Sent", total: recalc(mergedItems) });
+    setTableStatuses((p) => { const next = { ...p }; mergeTargets.forEach((t) => { next[t] = "available"; }); next[selectedTable] = "occupied"; return next; });
+    setSavedCarts((p) => { const next = { ...p }; mergeTargets.forEach((t) => { delete next[`${outlet}:${t}`]; }); return next; });
+    toast.success(`Merged ${mergeTargets.length} table(s) → ${selectedTable}`);
+    setMergeDialog(false); setMergeTargets([]);
+  };
+
   // ── Render ──
   return (
     <>
@@ -844,24 +994,44 @@ function POS() {
                 {cart.length === 0 ? (
                   <div className="text-sm text-muted-foreground text-center py-8">Tap menu items to add</div>
                 ) : (
-                  cart.map((c) => (
+                  cart.map((c) => {
+                    const dineIn = channel === "Dine-In" && outlet !== "Room Service";
+                    const seatMax = tableCovers[table] || 8;
+                    return (
                     <div key={c.id} className="text-sm">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium truncate">{c.name}</div>
-                          <div className="text-xs text-muted-foreground">{fmtINR(c.price)} each</div>
+                          <div className="font-medium truncate flex items-center gap-1.5">
+                            {c.name}
+                            {c.seat ? <Badge variant="outline" className="text-[8px] px-1 py-0">S{c.seat}</Badge> : null}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {c.discountPct ? (
+                              <><span className="line-through">{fmtINR(c.price)}</span> <span className="text-success">{fmtINR(Math.round(c.price * (1 - c.discountPct / 100)))}</span> · {c.discountPct}% off</>
+                            ) : <>{fmtINR(c.price)} each</>}
+                          </div>
                           {c.note && <div className="text-[10px] text-info italic">↳ {c.note}</div>}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <button onClick={() => updateQty(c.id, -1)} className="size-6 rounded border flex items-center justify-center hover:bg-accent"><Minus className="size-3" /></button>
                           <span className="w-5 text-center font-medium">{c.qty}</span>
                           <button onClick={() => updateQty(c.id, +1)} className="size-6 rounded border flex items-center justify-center hover:bg-accent"><Plus className="size-3" /></button>
+                          {dineIn && (
+                            <select value={c.seat ?? 0} title="Seat"
+                              onChange={(e) => { const sv = Number(e.target.value); setCart((prev) => prev.map((x) => x.id === c.id ? { ...x, seat: sv || undefined } : x)); }}
+                              className="h-6 rounded border text-[10px] bg-background px-0.5">
+                              <option value={0}>—</option>
+                              {Array.from({ length: seatMax }, (_, i) => i + 1).map((n) => <option key={n} value={n}>S{n}</option>)}
+                            </select>
+                          )}
+                          <button onClick={() => { setDiscItemId(c.id); setDiscPctInput(c.discountPct ? String(c.discountPct) : ""); }} className={`size-6 rounded flex items-center justify-center hover:text-primary ${c.discountPct ? "text-success" : "text-muted-foreground"}`} title="Item discount"><Tag className="size-3" /></button>
                           <button onClick={() => { setNoteItemId(c.id); setNoteText(c.note ?? ""); }} className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-primary" title="Add note"><ReceiptText className="size-3" /></button>
                           <button onClick={() => removeFromCart(c.id)} className="size-6 rounded flex items-center justify-center text-muted-foreground hover:text-destructive"><Trash2 className="size-3" /></button>
                         </div>
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
 
@@ -887,21 +1057,38 @@ function POS() {
                     </div>
                   </div>
 
-                  {/* Discount + GST + Comp */}
+                  {/* Discount + Comp */}
                   <div className="flex items-center gap-2">
-                    <Label className="text-xs shrink-0">Discount %</Label>
-                    <Input type="number" min={0} max={100} className="h-7 text-xs w-20" value={discountPct || ""} placeholder="0" onChange={(e) => { setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value)))); setActivePromoId(null); setIsComp(false); }} />
-                    <div className="ml-auto flex items-center gap-1.5">
-                      <button onClick={() => setTaxEnabled((v) => !v)} className={`text-xs px-2 py-1 rounded border transition ${taxEnabled ? "bg-primary/10 border-primary/40 text-primary" : "text-muted-foreground"}`}>GST 18%</button>
-                      <button onClick={() => setCompDialog(true)} className={`text-xs px-2 py-1 rounded border transition shrink-0 ${isComp ? "bg-success/10 border-success/50 text-success font-medium" : "text-muted-foreground hover:border-muted-foreground/40"}`}>{isComp ? "✓ Comp" : "Comp"}</button>
+                    <Label className="text-xs shrink-0">Bill Disc %</Label>
+                    <Input type="number" min={0} max={100} className="h-7 text-xs w-16" value={discountPct || ""} placeholder="0" onChange={(e) => { setDiscountPct(Math.min(100, Math.max(0, Number(e.target.value)))); setActivePromoId(null); setIsComp(false); }} />
+                    <Label className="text-xs shrink-0 ml-1">Svc %</Label>
+                    <Input type="number" min={0} max={100} className="h-7 text-xs w-16" value={serviceChargePct || ""} placeholder="0" onChange={(e) => setServiceChargePct(Math.min(100, Math.max(0, Number(e.target.value))))} />
+                    <button onClick={() => setCompDialog(true)} className={`ml-auto text-xs px-2 py-1 rounded border transition shrink-0 ${isComp ? "bg-success/10 border-success/50 text-success font-medium" : "text-muted-foreground hover:border-muted-foreground/40"}`}>{isComp ? "✓ Comp" : "Comp"}</button>
+                  </div>
+
+                  {/* Tax controls */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button onClick={() => setTaxEnabled((v) => !v)} className={`text-xs px-2 py-1 rounded border transition ${taxEnabled ? "bg-primary/10 border-primary/40 text-primary" : "text-muted-foreground"}`}>{taxEnabled ? "Tax On" : "Tax Off"}</button>
+                    <Select value={String(gstRate)} onValueChange={(v) => setGstRate(Number(v))}>
+                      <SelectTrigger className="h-7 text-xs w-20"><SelectValue /></SelectTrigger>
+                      <SelectContent>{GST_RATES.map((r) => <SelectItem key={r} value={String(r)}>GST {r}%</SelectItem>)}</SelectContent>
+                    </Select>
+                    <div className="flex rounded border overflow-hidden">
+                      <button onClick={() => setTaxMode("gst")} className={`text-xs px-2 py-1 transition ${taxMode === "gst" ? "bg-secondary text-secondary-foreground" : "text-muted-foreground"}`}>CGST+SGST</button>
+                      <button onClick={() => setTaxMode("igst")} className={`text-xs px-2 py-1 transition border-l ${taxMode === "igst" ? "bg-secondary text-secondary-foreground" : "text-muted-foreground"}`}>IGST</button>
                     </div>
                   </div>
 
                   {/* Totals */}
                   <div className="space-y-1 text-sm">
                     <div className="flex justify-between text-muted-foreground"><span>Subtotal</span><span>{fmtINR(subtotal)}</span></div>
-                    {discountAmt > 0 && <div className="flex justify-between text-success"><span>Discount ({discountPct}%){activePromoId && ` · ${PROMOTIONS.find(p => p.id === activePromoId)?.name}`}</span><span>−{fmtINR(discountAmt)}</span></div>}
-                    {taxEnabled && <div className="flex justify-between text-muted-foreground"><span>CGST 9% + SGST 9%</span><span>{fmtINR(tax)}</span></div>}
+                    {itemDiscountAmt > 0 && <div className="flex justify-between text-success"><span>Item discounts</span><span>−{fmtINR(itemDiscountAmt)}</span></div>}
+                    {discountAmt > 0 && <div className="flex justify-between text-success"><span>Bill discount ({discountPct}%){activePromoId && ` · ${PROMOTIONS.find(p => p.id === activePromoId)?.name}`}</span><span>−{fmtINR(discountAmt)}</span></div>}
+                    {serviceCharge > 0 && <div className="flex justify-between text-muted-foreground"><span>Service charge ({serviceChargePct}%)</span><span>{fmtINR(serviceCharge)}</span></div>}
+                    {taxEnabled && (taxMode === "gst"
+                      ? <div className="flex justify-between text-muted-foreground"><span>CGST {gstRate / 2}% + SGST {gstRate / 2}%</span><span>{fmtINR(tax)}</span></div>
+                      : <div className="flex justify-between text-muted-foreground"><span>IGST {gstRate}%</span><span>{fmtINR(tax)}</span></div>
+                    )}
                     <div className="flex justify-between font-semibold text-base pt-1 border-t"><span>Total</span><span>{fmtINR(total)}</span></div>
                   </div>
 
@@ -1018,6 +1205,16 @@ function POS() {
                     <ReceiptText className="size-3.5" />Open Order
                   </Button>
                 ) : null}
+                {tableOrders(selectedTable).length > 0 && (
+                  <>
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setSplitSel({}); setSplitTarget(""); setSplitDialog(true); }}>
+                      <UtensilsCrossed className="size-3.5" />Split
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setMergeTargets([]); setMergeDialog(true); }}>
+                      <Users className="size-3.5" />Merge
+                    </Button>
+                  </>
+                )}
                 {tableStatuses[selectedTable] !== "available" && (
                   <div className="flex items-center gap-2">
                     <Label className="text-xs text-muted-foreground shrink-0">Transfer to</Label>
@@ -1072,10 +1269,13 @@ function POS() {
               {filteredKOT.map((o) => {
                 const elapsedMins = Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 60000);
                 const urgency = elapsedMins >= 15 ? "destructive" : elapsedMins >= 8 ? "warning" : "success";
-                const urgencyClass = urgency === "destructive" ? "border-destructive bg-destructive/5 animate-pulse" : urgency === "warning" ? "border-warning bg-warning/5" : "border-success/40 bg-success/5";
+                const stage = kdsStageOf(o.id);
+                const stageMeta = KDS_STAGE_META[stage];
+                const bumped = itemBumps[o.id] ?? [];
+                const cardRing = urgency === "destructive" ? "border-destructive bg-destructive/5" : stageMeta.ring;
                 return (
-                  <Card key={o.id} className={`p-4 border-2 ${urgencyClass}`}>
-                    <div className="flex items-start justify-between mb-3">
+                  <Card key={o.id} className={`p-4 border-2 ${cardRing}`}>
+                    <div className="flex items-start justify-between mb-2">
                       <div>
                         <div className="flex items-center gap-1.5 font-bold text-base">
                           {OUTLET_ICON[o.outlet as Outlet]} {o.outlet}
@@ -1085,22 +1285,30 @@ function POS() {
                           {o.channel && o.channel !== "Dine-In" && <Badge variant="outline" className="text-[9px] px-1">{o.channel}</Badge>}
                         </div>
                       </div>
-                      <div className={`flex items-center gap-1 text-sm font-semibold ${urgency === "destructive" ? "text-destructive" : urgency === "warning" ? "text-warning-foreground" : "text-success"}`}>
-                        <Timer className="size-4" />{elapsedMins}m
+                      <div className="flex flex-col items-end gap-1">
+                        <Badge className={`text-[10px] border ${stageMeta.color}`}>{stageMeta.label}</Badge>
+                        <div className={`flex items-center gap-1 text-sm font-semibold ${urgency === "destructive" ? "text-destructive" : urgency === "warning" ? "text-warning-foreground" : "text-success"}`}>
+                          <Timer className="size-4" />{elapsedMins}m
+                        </div>
                       </div>
                     </div>
-                    <div className="space-y-1.5 mb-3">
+                    <div className="space-y-1 mb-3">
                       {o.items.map((i) => {
                         const itemStation = getItemStation(i.name);
                         const highlight = kdsStation === "All" || itemStation === kdsStation;
+                        const isBumped = bumped.includes(i.name);
                         return (
-                          <div key={i.name} className={`flex items-center justify-between text-sm transition ${!highlight ? "opacity-30" : ""}`}>
-                            <span className="font-medium">{i.qty}× {i.name}</span>
+                          <button key={i.name} onClick={() => toggleItemBump(o.id, i.name)}
+                            className={`w-full flex items-center justify-between text-sm transition rounded px-1.5 py-1 hover:bg-accent/40 ${!highlight ? "opacity-30" : ""} ${isBumped ? "opacity-50" : ""}`}>
+                            <span className={`font-medium flex items-center gap-1.5 ${isBumped ? "line-through" : ""}`}>
+                              {isBumped && <CheckCircle2 className="size-3.5 text-success" />}
+                              {i.qty}× {i.name}{i.seat ? ` · S${i.seat}` : ""}
+                            </span>
                             <div className="flex items-center gap-1.5 shrink-0">
                               {i.note && <span className="text-xs text-muted-foreground italic">{i.note}</span>}
                               <Badge variant="outline" className="text-[9px] px-1">{itemStation}</Badge>
                             </div>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
@@ -1109,8 +1317,9 @@ function POS() {
                         <AlertCircle className="size-3.5" /> Overdue — {elapsedMins} min
                       </div>
                     )}
-                    <Button size="sm" className="w-full gap-1.5" onClick={() => { updateOrder(o.id, { status: "Paid" }); toast.success("Order marked ready & served"); }}>
-                      <CheckCircle2 className="size-4" /> Mark Ready &amp; Served
+                    <Button size="sm" className="w-full gap-1.5" disabled={!stageMeta.next}
+                      onClick={() => advanceKds(o.id)}>
+                      <CheckCircle2 className="size-4" /> {stageMeta.action ?? "Done"}
                     </Button>
                   </Card>
                 );
@@ -1253,11 +1462,18 @@ function POS() {
                         <tr key={o.id} className="border-b last:border-0 hover:bg-accent/5">
                           <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{o.orderNumber ?? `#${String(paidOrders.length - idx).padStart(4, "0")}`}</td>
                           <td className="px-4 py-3">
-                            {o.total === 0 ? (
-                              <Badge className="bg-success/15 text-success border-success/30 text-[9px]">COMP</Badge>
-                            ) : o.channel && o.channel !== "Dine-In" ? (
-                              <Badge variant="outline" className="text-[9px] px-1.5">{o.channel}</Badge>
-                            ) : <span className="text-xs text-muted-foreground">Dine-In</span>}
+                            <div className="flex flex-col gap-1 items-start">
+                              {o.total === 0 ? (
+                                <Badge className="bg-success/15 text-success border-success/30 text-[9px]">COMP</Badge>
+                              ) : o.channel && o.channel !== "Dine-In" ? (
+                                <Badge variant="outline" className="text-[9px] px-1.5">{o.channel}</Badge>
+                              ) : <span className="text-xs text-muted-foreground">Dine-In</span>}
+                              {refunds[o.id] && (
+                                <Badge className={`text-[9px] ${refunds[o.id].type === "refund" ? "bg-warning/20 text-warning-foreground border-warning/30" : "bg-purple-500/15 text-purple-600 border-purple-300/30"}`}>
+                                  {refunds[o.id].type === "refund" ? "REFUNDED" : "CREDIT NOTE"}{refunds[o.id].partial ? " (partial)" : ""}
+                                </Badge>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-3"><div className="flex items-center gap-1.5">{OUTLET_ICON[o.outlet as Outlet]}{o.outlet}</div></td>
                           <td className="px-4 py-3 font-mono text-xs">{o.customerName ?? o.table ?? "Room Svc"}</td>
@@ -1267,7 +1483,15 @@ function POS() {
                           <td className="px-4 py-3">
                             <div className="flex gap-1">
                               <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" onClick={() => setReceiptOrder(o)}><Printer className="size-3" />Bill</Button>
-                              <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-destructive hover:text-destructive" onClick={() => { setVoidId(o.id); setVoidReason(""); }}><X className="size-3" />Void</Button>
+                              {refunds[o.id] ? (
+                                <span className="text-[10px] text-muted-foreground self-center px-1">by {refunds[o.id].approver}</span>
+                              ) : (
+                                <>
+                                  <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-warning-foreground hover:text-warning-foreground" onClick={() => openRefund(o.id, "refund")}><Banknote className="size-3" />Refund</Button>
+                                  <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" onClick={() => openRefund(o.id, "credit_note")}><ReceiptText className="size-3" />Credit</Button>
+                                  <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-destructive hover:text-destructive" onClick={() => { setVoidId(o.id); setVoidReason(""); }}><X className="size-3" />Void</Button>
+                                </>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1718,6 +1942,134 @@ function POS() {
               toast.success("Order marked complimentary");
             }}>Apply Comp</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Item Discount Dialog ── */}
+      <Dialog open={!!discItemId} onOpenChange={() => setDiscItemId(null)}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader><DialogTitle>Item Discount</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">Apply a percentage discount to this line item only.</p>
+          <div className="flex items-center gap-2">
+            <Input type="number" min={0} max={100} placeholder="e.g. 10" value={discPctInput} onChange={(e) => setDiscPctInput(e.target.value)} autoFocus
+              onKeyDown={(e) => { if (e.key === "Enter") applyItemDiscount(); }} />
+            <span className="text-sm text-muted-foreground">% off</span>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => { setDiscPctInput("0"); }}>Clear</Button>
+            <Button className="flex-1" onClick={applyItemDiscount}>Apply</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Refund / Credit Note Dialog (manager-gated) ── */}
+      <Dialog open={!!refundDialog} onOpenChange={() => setRefundDialog(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>{refundDialog?.type === "credit_note" ? "Issue Credit Note" : "Process Refund"}</DialogTitle></DialogHeader>
+          <p className="text-xs text-muted-foreground">Manager authorisation required. Enter amount, reason, and approving manager's credentials.</p>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Amount (₹) — max {refundDialog ? fmtINR(orders.find((o) => o.id === refundDialog.orderId)?.total ?? 0) : "—"}</Label>
+              <Input type="number" min={0} className="h-8 mt-1" value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Reason</Label>
+              <Input className="h-8 mt-1" placeholder="e.g. Wrong order, quality issue" value={refundReason} onChange={(e) => setRefundReason(e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Manager Name</Label>
+                <Input className="h-8 mt-1" placeholder="Manager" value={mgrName} onChange={(e) => setMgrName(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Manager PIN</Label>
+                <Input type="password" className="h-8 mt-1" placeholder="••••" value={mgrPin} onChange={(e) => setMgrPin(e.target.value)} />
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground">Demo PIN: 1234</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => setRefundDialog(null)}>Cancel</Button>
+            <Button className="flex-1" onClick={confirmRefund}>Authorise</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Table Split Dialog ── */}
+      <Dialog open={splitDialog} onOpenChange={setSplitDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Split Table {selectedTable}</DialogTitle></DialogHeader>
+          {selectedTable && (
+            <>
+              <p className="text-xs text-muted-foreground">Select items to move to another table.</p>
+              <div className="max-h-56 overflow-y-auto space-y-1 border rounded p-2">
+                {tableItemRows(selectedTable).map((i, idx) => (
+                  <label key={idx} className="flex items-center justify-between gap-2 text-sm py-1 cursor-pointer">
+                    <span className="flex items-center gap-2">
+                      <input type="checkbox" checked={!!splitSel[idx]} onChange={(e) => setSplitSel((p) => ({ ...p, [idx]: e.target.checked }))} />
+                      {i.qty}× {i.name}{i.seat ? ` · S${i.seat}` : ""}
+                    </span>
+                    <span className="text-muted-foreground text-xs">{fmtINR(i.qty * i.price)}</span>
+                  </label>
+                ))}
+                {tableItemRows(selectedTable).length === 0 && <div className="text-xs text-muted-foreground text-center py-4">No items on this table</div>}
+              </div>
+              <div>
+                <Label className="text-xs">Move to table</Label>
+                <Select value={splitTarget} onValueChange={setSplitTarget}>
+                  <SelectTrigger className="h-8 mt-1"><SelectValue placeholder="Pick available table" /></SelectTrigger>
+                  <SelectContent>
+                    {ALL_TABLES.filter((t) => {
+                      const selOutlet = ALL_TABLES.find((x) => x.id === selectedTable)?.outlet;
+                      return t.outlet === selOutlet && t.id !== selectedTable && tableStatuses[t.id] === "available";
+                    }).map((t) => <SelectItem key={t.id} value={t.id}>{t.id}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => setSplitDialog(false)}>Cancel</Button>
+                <Button className="flex-1" disabled={!splitTarget} onClick={doSplit}>Split</Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Table Merge Dialog ── */}
+      <Dialog open={mergeDialog} onOpenChange={setMergeDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Merge into {selectedTable}</DialogTitle></DialogHeader>
+          {selectedTable && (
+            <>
+              <p className="text-xs text-muted-foreground">Select occupied tables to merge into this one. Their orders move here and the tables are freed.</p>
+              <div className="max-h-56 overflow-y-auto space-y-1 border rounded p-2">
+                {ALL_TABLES.filter((t) => {
+                  const selOutlet = ALL_TABLES.find((x) => x.id === selectedTable)?.outlet;
+                  return t.outlet === selOutlet && t.id !== selectedTable && tableOrders(t.id).length > 0;
+                }).map((t) => {
+                  const tot = tableOrders(t.id).reduce((s, o) => s + o.total, 0);
+                  return (
+                    <label key={t.id} className="flex items-center justify-between gap-2 text-sm py-1 cursor-pointer">
+                      <span className="flex items-center gap-2">
+                        <input type="checkbox" checked={mergeTargets.includes(t.id)}
+                          onChange={(e) => setMergeTargets((p) => e.target.checked ? [...p, t.id] : p.filter((x) => x !== t.id))} />
+                        {t.id}
+                      </span>
+                      <span className="text-muted-foreground text-xs">{fmtINR(tot)}</span>
+                    </label>
+                  );
+                })}
+                {ALL_TABLES.filter((t) => {
+                  const selOutlet = ALL_TABLES.find((x) => x.id === selectedTable)?.outlet;
+                  return t.outlet === selOutlet && t.id !== selectedTable && tableOrders(t.id).length > 0;
+                }).length === 0 && <div className="text-xs text-muted-foreground text-center py-4">No other occupied tables with orders</div>}
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => setMergeDialog(false)}>Cancel</Button>
+                <Button className="flex-1" disabled={!mergeTargets.length} onClick={doMerge}>Merge</Button>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 

@@ -1,21 +1,50 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
-import { useMHMS } from "@/lib/mhms-store";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, Shield, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Plus, Search, Shield, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useApiUsers, useCreateApiUser, useAddUserRole, useRemoveUserRole } from "@/lib/api/hooks";
 
-const ROLES = ["Admin", "Manager", "Front Desk", "Housekeeping", "Accounts", "F&B"] as const;
+const UI_ROLES = ["Admin", "Manager", "Front Desk", "Housekeeping", "Accounts", "F&B"] as const;
+type UiRole = (typeof UI_ROLES)[number];
+
+const UI_TO_API: Record<UiRole, string> = {
+  Admin: "super_admin",
+  Manager: "hotel_admin",
+  "Front Desk": "front_desk",
+  Housekeeping: "housekeeping",
+  Accounts: "accountant",
+  "F&B": "fnb",
+};
+
+const API_TO_UI: Record<string, string> = {
+  super_admin: "Admin",
+  hotel_admin: "Manager",
+  front_desk: "Front Desk",
+  housekeeping: "Housekeeping",
+  accountant: "Accounts",
+  fnb: "F&B",
+  guest: "Guest",
+};
+
+const ROLE_COLORS: Record<string, string> = {
+  Admin: "bg-destructive/15 text-destructive border-destructive/30",
+  Manager: "bg-warning/15 text-warning-foreground border-warning/30",
+  "Front Desk": "bg-info/15 text-info border-info/30",
+  Housekeeping: "bg-muted text-muted-foreground",
+  Accounts: "bg-success/15 text-success border-success/30",
+  "F&B": "bg-purple-500/15 text-purple-600 border-purple-300/30",
+  Guest: "bg-muted text-muted-foreground",
+};
 
 const PERMS = [
   { mod: "Dashboard", roles: ["Admin", "Manager", "Front Desk", "Housekeeping", "Accounts", "F&B"] },
@@ -38,14 +67,8 @@ const PERMS = [
 ];
 
 const ACTIVITY_LOG = [
-  { user: "Sarah Manager", action: "Updated rate plan for Weekend", time: "2 min ago", ip: "192.168.1.42" },
-  { user: "Dev Front Desk", action: "Checked in reservation RES2014", time: "14 min ago", ip: "192.168.1.15" },
-  { user: "Admin User", action: "Created new user Raj Accounts", time: "1 hr ago", ip: "192.168.1.5" },
-  { user: "Sunita HK", action: "Completed task 304-Deep Clean", time: "2 hrs ago", ip: "192.168.1.28" },
-  { user: "Arjun F&B", action: "Voided POS order #POS-0087", time: "3 hrs ago", ip: "192.168.1.33" },
-  { user: "Admin User", action: "Exported Daily Revenue report", time: "4 hrs ago", ip: "192.168.1.5" },
-  { user: "Dev Front Desk", action: "Processed check-out RES2010", time: "5 hrs ago", ip: "192.168.1.15" },
-  { user: "Sarah Manager", action: "Approved procurement PO-2026-0041", time: "6 hrs ago", ip: "192.168.1.42" },
+  { user: "hoteladmin", action: "Hotel admin account created", time: "Jun 18, 2026", ip: "—" },
+  { user: "jasmeet", action: "Platform master admin created", time: "System migration", ip: "—" },
 ];
 
 export const Route = createFileRoute("/users")({
@@ -54,36 +77,55 @@ export const Route = createFileRoute("/users")({
 });
 
 function Users() {
-  const { users, addUser, updateUser } = useMHMS();
+  const usersQ = useApiUsers();
+  const users = usersQ.data ?? [];
+  const createUser = useCreateApiUser();
+  const addRole = useAddUserRole();
+  const removeRole = useRemoveUserRole();
+
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("All");
   const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", role: "Front Desk" });
-  const [editUser, setEditUser] = useState<typeof users[number] | null>(null);
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "Front Desk" as UiRole });
+  const [editUser, setEditUser] = useState<(typeof users)[number] | null>(null);
+  const [addRoleVal, setAddRoleVal] = useState<UiRole>("Front Desk");
+
+  const primaryRole = (roles: string[]): string => {
+    const nonGuest = roles.filter((r) => r !== "guest");
+    if (nonGuest.length === 0) return "Guest";
+    return API_TO_UI[nonGuest[0]] ?? nonGuest[0].replace(/_/g, " ");
+  };
 
   const filtered = users.filter((u) => {
-    const matchSearch = u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase());
-    const matchRole = roleFilter === "All" || u.role === roleFilter;
+    const name = u.full_name || u.email;
+    const matchSearch =
+      name.toLowerCase().includes(search.toLowerCase()) ||
+      u.email.toLowerCase().includes(search.toLowerCase());
+    const matchRole =
+      roleFilter === "All" ||
+      u.roles.some((r) => (API_TO_UI[r] ?? r) === roleFilter);
     return matchSearch && matchRole;
   });
 
+  const initials = (name: string) =>
+    name.split(" ").map((s) => s[0]?.toUpperCase() ?? "").join("").slice(0, 2) || "??";
+
+  const adminCount = users.filter((u) => u.roles.includes("super_admin")).length;
+  const uniqueRoles = new Set(users.flatMap((u) => u.roles.filter((r) => r !== "guest")));
+
   const handleAdd = () => {
-    if (!form.name || !form.email) return;
-    addUser({ name: form.name, email: form.email, role: form.role as any, active: true, lastLogin: new Date().toISOString().slice(0, 10) });
-    toast.success("User created · invitation sent");
-    setAddOpen(false);
-    setForm({ name: "", email: "", role: "Front Desk" });
-  };
-
-  const initials = (name: string) => name.split(" ").map((s) => s[0]?.toUpperCase() ?? "").join("").slice(0, 2);
-
-  const ROLE_COLORS: Record<string, string> = {
-    Admin: "bg-destructive/15 text-destructive border-destructive/30",
-    Manager: "bg-warning/15 text-warning-foreground border-warning/30",
-    "Front Desk": "bg-info/15 text-info border-info/30",
-    Housekeeping: "bg-muted text-muted-foreground",
-    Accounts: "bg-success/15 text-success border-success/30",
-    "F&B": "bg-purple-500/15 text-purple-600 border-purple-300/30",
+    if (!form.name || !form.email || !form.password) return;
+    createUser.mutate(
+      { email: form.email, password: form.password, full_name: form.name, role: UI_TO_API[form.role] },
+      {
+        onSuccess: () => {
+          toast.success("User created");
+          setAddOpen(false);
+          setForm({ name: "", email: "", password: "", role: "Front Desk" });
+        },
+        onError: (e: any) => toast.error(e.message ?? "Failed to create user"),
+      }
+    );
   };
 
   return (
@@ -99,10 +141,10 @@ function Users() {
       />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-        <Stat label="Total Users" value={users.length} hint="All accounts" />
-        <Stat label="Active" value={users.filter((u) => u.active).length} tone="success" hint="Can log in" />
-        <Stat label="Roles" value={new Set(users.map((u) => u.role)).size} hint="Unique roles" />
-        <Stat label="Admins" value={users.filter((u) => u.role === "Admin").length} tone="warning" hint="Full access" />
+        <Stat label="Total Users" value={usersQ.isLoading ? "…" : users.length} hint="All accounts" />
+        <Stat label="Active" value={usersQ.isLoading ? "…" : users.length} tone="success" hint="Registered accounts" />
+        <Stat label="Roles" value={usersQ.isLoading ? "…" : uniqueRoles.size} hint="Unique roles in use" />
+        <Stat label="Admins" value={usersQ.isLoading ? "…" : adminCount} tone="warning" hint="super_admin role" />
       </div>
 
       <Tabs defaultValue="users">
@@ -120,7 +162,7 @@ function Users() {
               <Input className="pl-8 h-8 w-52 text-sm" placeholder="Search users…" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
             <div className="flex gap-1.5 flex-wrap">
-              {["All", ...ROLES].map((r) => (
+              {["All", ...UI_ROLES].map((r) => (
                 <button key={r} onClick={() => setRoleFilter(r)}
                   className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${roleFilter === r ? "bg-secondary text-secondary-foreground border-secondary" : "hover:border-muted-foreground/40"}`}>
                   {r}
@@ -133,42 +175,49 @@ function Users() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    {["User", "Email", "Role", "Last Login", "2FA", "Active", ""].map((h) => (
+                    {["User", "Email", "Primary Role", "Joined", "All Roles", ""].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((u) => (
-                    <tr key={u.id} className="border-b last:border-0 hover:bg-accent/5">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <Avatar className="size-8">
-                            <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials(u.name)}</AvatarFallback>
-                          </Avatar>
-                          <span className="font-medium">{u.name}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground text-xs">{u.email}</td>
-                      <td className="px-4 py-3">
-                        <Badge className={`text-[10px] border ${ROLE_COLORS[u.role] ?? "bg-muted text-muted-foreground"}`}>{u.role}</Badge>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground text-xs">{u.lastLogin}</td>
-                      <td className="px-4 py-3">
-                        {u.role === "Admin" || u.role === "Accounts"
-                          ? <CheckCircle2 className="size-3.5 text-success" />
-                          : <XCircle className="size-3.5 text-muted-foreground" />}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Switch checked={u.active} onCheckedChange={(v) => { updateUser(u.id, { active: v }); toast.success(`${u.name} ${v ? "activated" : "deactivated"}`); }} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setEditUser(u)}>Edit</Button>
-                      </td>
-                    </tr>
-                  ))}
-                  {filtered.length === 0 && (
-                    <tr><td colSpan={7} className="text-center py-10 text-muted-foreground text-sm">No users match your search.</td></tr>
+                  {usersQ.isLoading ? (
+                    <tr><td colSpan={6} className="py-10 text-center"><Loader2 className="size-5 animate-spin mx-auto text-muted-foreground" /></td></tr>
+                  ) : filtered.map((u) => {
+                    const pr = primaryRole(u.roles);
+                    return (
+                      <tr key={u.id} className="border-b last:border-0 hover:bg-accent/5">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <Avatar className="size-8">
+                              <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials(u.full_name || u.email)}</AvatarFallback>
+                            </Avatar>
+                            <span className="font-medium">{u.full_name || "—"}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground text-xs">{u.email}</td>
+                        <td className="px-4 py-3">
+                          <Badge className={`text-[10px] border ${ROLE_COLORS[pr] ?? "bg-muted text-muted-foreground"}`}>{pr}</Badge>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground text-xs">{u.joined_at}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {u.roles.filter((r) => r !== "guest").map((r) => (
+                              <Badge key={r} variant="outline" className="text-[10px]">{r.replace(/_/g, " ")}</Badge>
+                            ))}
+                            {u.roles.every((r) => r === "guest") && (
+                              <Badge variant="outline" className="text-[10px]">guest</Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => { setEditUser(u); setAddRoleVal("Front Desk"); }}>Edit</Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!usersQ.isLoading && filtered.length === 0 && (
+                    <tr><td colSpan={6} className="text-center py-10 text-muted-foreground text-sm">No users match your search.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -176,7 +225,7 @@ function Users() {
           </Card>
         </TabsContent>
 
-        {/* Permissions */}
+        {/* Permissions Matrix */}
         <TabsContent value="perms">
           <Card>
             <div className="overflow-x-auto">
@@ -184,7 +233,7 @@ function Users() {
                 <thead>
                   <tr className="border-b">
                     <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Module</th>
-                    {ROLES.map((r) => (
+                    {UI_ROLES.map((r) => (
                       <th key={r} className="px-3 py-3 text-xs font-medium text-muted-foreground text-center whitespace-nowrap">{r}</th>
                     ))}
                   </tr>
@@ -193,7 +242,7 @@ function Users() {
                   {PERMS.map((p) => (
                     <tr key={p.mod} className="border-b last:border-0 hover:bg-accent/5">
                       <td className="px-4 py-3 font-medium text-sm">{p.mod}</td>
-                      {ROLES.map((r) => (
+                      {UI_ROLES.map((r) => (
                         <td key={r} className="px-3 py-3 text-center">
                           {p.roles.includes(r)
                             ? <CheckCircle2 className="size-4 text-success mx-auto" />
@@ -255,18 +304,28 @@ function Users() {
               <Input className="h-8 mt-1" type="email" placeholder="raj@hotel.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
             </div>
             <div>
+              <Label className="text-xs">Password *</Label>
+              <Input className="h-8 mt-1" type="password" placeholder="Min. 8 characters" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+            </div>
+            <div>
               <Label className="text-xs">Role</Label>
-              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
+              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v as UiRole })}>
                 <SelectTrigger className="h-8 mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  {UI_ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            <p className="text-xs text-muted-foreground">An invitation email will be sent to the user.</p>
+            <p className="text-xs text-muted-foreground">User will be created with the selected role assigned.</p>
             <div className="flex gap-2 pt-1">
               <Button variant="outline" className="flex-1" onClick={() => setAddOpen(false)}>Cancel</Button>
-              <Button className="flex-1" disabled={!form.name || !form.email} onClick={handleAdd}>Add User</Button>
+              <Button
+                className="flex-1"
+                disabled={!form.name || !form.email || !form.password || createUser.isPending}
+                onClick={handleAdd}
+              >
+                {createUser.isPending ? <Loader2 className="size-4 animate-spin" /> : "Add User"}
+              </Button>
             </div>
           </div>
         </DialogContent>
@@ -276,22 +335,58 @@ function Users() {
       {editUser && (
         <Dialog open={!!editUser} onOpenChange={() => setEditUser(null)}>
           <DialogContent className="max-w-sm">
-            <DialogHeader><DialogTitle>Edit User — {editUser.name}</DialogTitle></DialogHeader>
-            <div className="space-y-3">
+            <DialogHeader><DialogTitle>Edit — {editUser.full_name || editUser.email}</DialogTitle></DialogHeader>
+            <div className="space-y-4">
               <div>
-                <Label className="text-xs">Role</Label>
-                <Select defaultValue={editUser.role} onValueChange={(v) => updateUser(editUser.id, { role: v as any })}>
-                  <SelectTrigger className="h-8 mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <Label className="text-xs mb-2 block">Current Roles</Label>
+                <div className="flex flex-wrap gap-1.5 p-2.5 border rounded min-h-9">
+                  {editUser.roles.map((r) => (
+                    <Badge key={r} variant="outline" className="text-xs gap-1.5 pr-1">
+                      {r.replace(/_/g, " ")}
+                      {r !== "guest" && (
+                        <button
+                          className="ml-0.5 text-muted-foreground hover:text-destructive leading-none"
+                          onClick={() => {
+                            removeRole.mutate(
+                              { userId: editUser.id, role: r },
+                              {
+                                onSuccess: () => { toast.success(`Role '${r}' removed`); setEditUser(null); },
+                                onError: (e: any) => toast.error(e.message ?? "Failed"),
+                              }
+                            );
+                          }}
+                        >×</button>
+                      )}
+                    </Badge>
+                  ))}
+                </div>
               </div>
-              <div className="flex items-center justify-between border rounded p-3">
-                <Label className="text-xs">Active Account</Label>
-                <Switch defaultChecked={editUser.active} onCheckedChange={(v) => updateUser(editUser.id, { active: v })} />
+              <div>
+                <Label className="text-xs mb-1 block">Add Role</Label>
+                <div className="flex gap-2">
+                  <Select value={addRoleVal} onValueChange={(v) => setAddRoleVal(v as UiRole)}>
+                    <SelectTrigger className="h-8 flex-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {UI_ROLES.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    disabled={addRole.isPending}
+                    onClick={() => {
+                      addRole.mutate(
+                        { userId: editUser.id, role: UI_TO_API[addRoleVal] },
+                        {
+                          onSuccess: () => { toast.success(`Role '${addRoleVal}' added`); setEditUser(null); },
+                          onError: (e: any) => toast.error(e.message ?? "Failed"),
+                        }
+                      );
+                    }}
+                  >
+                    {addRole.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Add"}
+                  </Button>
+                </div>
               </div>
-              <Button className="w-full" onClick={() => { toast.success("User updated"); setEditUser(null); }}>Save Changes</Button>
             </div>
           </DialogContent>
         </Dialog>
