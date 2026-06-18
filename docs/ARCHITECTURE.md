@@ -268,11 +268,14 @@ stateDiagram-v2
 
 ---
 
-## 6. POS Order Flow (demo store · local state)
+## 6. POS Order Flow (live · Redis-cached)
 
-POS is fully featured in the UI but currently lives in `mhms-store-v4` +
-component state — **not** persisted to the backend. Multi-cart, KDS stages,
-table split/merge, refunds and tax depth are all client-side.
+POS orders are **persisted to the backend** (`pos_orders` table, JSONB line
+items) via `/api/pos/orders` when signed in, with a demo-store fallback when
+offline. The order list is **cached in Redis** (15s TTL, invalidated on every
+write) and polled every 15s for near-real-time KDS / Live Orders. Multi-cart,
+KDS stages, table split/merge, refunds and tax depth remain client-side UI on
+top of the persisted order.
 
 ```mermaid
 flowchart TB
@@ -416,13 +419,14 @@ flowchart LR
 | Auth, JWT, roles | ✅ Live |
 | Dashboard, Reservations, Front Desk, CRM, Housekeeping | ✅ Live |
 | Billing (folios/charges/payments/invoices), Users | ✅ Live |
-| Booking source (OTA) on reservations | ✅ Live (this milestone) |
-| POS / Restaurant (orders, KDS, split/merge, refunds, tax) | 🟡 Demo store — rich UI, not persisted |
+| Booking source (OTA) on reservations | ✅ Live |
+| POS orders (`pos_orders`, Redis-cached) | ✅ Live |
+| POS KDS stages, split/merge, refunds, tax depth | 🟡 Client-side UI over the persisted order |
 | Reports, Night Audit, Revenue, Channel Mgr, Booking Engine | 🟡 Demo — backend endpoints exist, not wired |
 | Inventory, Procurement, Maintenance, Properties, Admin | 🟡 Demo |
 
-**Biggest next integration:** persist POS orders to the backend and post F&B +
-room-charge to guest folios (closes the POS ↔ Billing loop).
+**Biggest next integration:** post POS F&B + room-charge to guest folios
+(closes the POS ↔ Billing loop), and persist KDS stage / refund records.
 
 ---
 *Generated as a snapshot of the system on this branch. Update alongside feature changes.*
