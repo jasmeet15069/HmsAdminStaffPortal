@@ -24,6 +24,11 @@ import {
   ChevronDown,
   LogIn,
   ConciergeBell,
+  Briefcase,
+  ClipboardList,
+  Share2,
+  Landmark,
+  Cog,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMHMS } from "@/lib/mhms-store";
@@ -64,7 +69,15 @@ type NavEntry = NavLeaf | NavGroup;
 
 const nav: NavEntry[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/reservations", label: "Reservations", icon: CalendarCheck },
+  {
+    label: "Front Office",
+    icon: Briefcase,
+    children: [
+      { to: "/reservations", label: "Reservations", icon: CalendarCheck },
+      { to: "/front-desk", label: "Front Desk", icon: Hotel },
+      { to: "/crm", label: "CRM & Loyalty", icon: Users },
+    ],
+  },
   {
     label: "Restaurant",
     icon: UtensilsCrossed,
@@ -74,22 +87,44 @@ const nav: NavEntry[] = [
       { to: "/menu-management", label: "Menu Management", icon: BookOpen },
     ],
   },
-  { to: "/inventory", label: "Inventory", icon: Boxes },
-  { to: "/front-desk", label: "Front Desk", icon: Hotel },
-  { to: "/housekeeping", label: "Housekeeping", icon: Sparkles },
-  { to: "/revenue", label: "Revenue Mgmt", icon: TrendingUp },
-  { to: "/billing", label: "Billing & Finance", icon: Receipt },
-  { to: "/procurement", label: "Procurement", icon: ShoppingCart },
-  { to: "/maintenance", label: "Maintenance", icon: Wrench },
-  { to: "/crm", label: "CRM & Loyalty", icon: Users },
-  { to: "/channel-manager", label: "Channel Manager", icon: Globe2 },
-  { to: "/booking-engine", label: "Booking Engine", icon: Calendar },
-  { to: "/reports", label: "Reports & Analytics", icon: BarChart3 },
-  { to: "/night-audit", label: "Night Audit", icon: Moon },
-  { to: "/properties", label: "Properties", icon: Building2 },
-  { to: "/users", label: "Users & Roles", icon: ShieldCheck },
-  { to: "/admin", label: "System Admin", icon: Settings },
-] as const;
+  {
+    label: "Operations",
+    icon: ClipboardList,
+    children: [
+      { to: "/housekeeping", label: "Housekeeping", icon: Sparkles },
+      { to: "/maintenance", label: "Maintenance", icon: Wrench },
+      { to: "/inventory", label: "Inventory", icon: Boxes },
+      { to: "/procurement", label: "Procurement", icon: ShoppingCart },
+    ],
+  },
+  {
+    label: "Distribution",
+    icon: Share2,
+    children: [
+      { to: "/booking-engine", label: "Booking Engine", icon: Calendar },
+      { to: "/channel-manager", label: "Channel Manager", icon: Globe2 },
+      { to: "/revenue", label: "Revenue Mgmt", icon: TrendingUp },
+    ],
+  },
+  {
+    label: "Finance",
+    icon: Landmark,
+    children: [
+      { to: "/billing", label: "Billing & Finance", icon: Receipt },
+      { to: "/night-audit", label: "Night Audit", icon: Moon },
+      { to: "/reports", label: "Reports & Analytics", icon: BarChart3 },
+    ],
+  },
+  {
+    label: "Administration",
+    icon: Cog,
+    children: [
+      { to: "/properties", label: "Properties", icon: Building2 },
+      { to: "/users", label: "Users & Roles", icon: ShieldCheck },
+      { to: "/admin", label: "System Admin", icon: Settings },
+    ],
+  },
+];
 
 export default function AppShell() {
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -158,7 +193,7 @@ export default function AppShell() {
             <div className="text-[11px] text-sidebar-foreground/60">Hotel Suite</div>
           </div>
         </div>
-        <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+        <nav className="sidebar-scroll flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
           {nav.map((n) => {
             // Grouped (collapsible) section, e.g. Restaurant → POS / Mgmt / Menu.
             if ("children" in n) {
