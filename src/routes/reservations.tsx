@@ -42,6 +42,7 @@ interface Row {
   guestEmail?: string;
   guestPhone?: string;
   roomLabel: string;
+  source: string;
   checkIn: string;
   checkOut: string;
   nights: number;
@@ -75,6 +76,22 @@ const liveStatusMeta: Record<
     label: "Departed",
     color: "bg-muted text-muted-foreground border-border",
   },
+};
+
+// OTA / booking-source badge colours.
+const sourceColor = (src: string): string => {
+  switch (src) {
+    case "Booking.com": return "bg-blue-500/15 text-blue-600 border-blue-300/40";
+    case "Expedia": return "bg-yellow-500/15 text-yellow-700 border-yellow-300/40";
+    case "MakeMyTrip": return "bg-red-500/15 text-red-600 border-red-300/40";
+    case "Goibibo": return "bg-orange-500/15 text-orange-600 border-orange-300/40";
+    case "Agoda": return "bg-purple-500/15 text-purple-600 border-purple-300/40";
+    case "Airbnb": return "bg-pink-500/15 text-pink-600 border-pink-300/40";
+    case "Corporate": return "bg-info/15 text-info border-info/30";
+    case "Walk-in": return "bg-success/15 text-success border-success/30";
+    case "Phone": return "bg-muted text-muted-foreground border-border";
+    default: return "bg-primary/10 text-primary border-primary/30"; // Direct
+  }
 };
 
 // Demo store status -> unified bucket.
@@ -113,6 +130,7 @@ function ReservationsPage() {
           roomLabel: r.room_number
             ? `${r.room_number}${r.room_type ? ` · ${r.room_type}` : ""}`
             : "—",
+          source: r.source || "Direct",
           checkIn: r.check_in_date.slice(0, 10),
           checkOut: r.check_out_date.slice(0, 10),
           nights: r.nights,
@@ -139,6 +157,7 @@ function ReservationsPage() {
         guestEmail: g?.email,
         guestPhone: g?.phone,
         roomLabel: room ? `${room.number} · ${room.type}` : "—",
+        source: r.source || "Direct",
         checkIn: r.checkIn,
         checkOut: r.checkOut,
         nights,
@@ -158,7 +177,9 @@ function ReservationsPage() {
         const matchQ =
           !q ||
           r.guestName.toLowerCase().includes(q.toLowerCase()) ||
-          r.code.toLowerCase().includes(q.toLowerCase());
+          r.code.toLowerCase().includes(q.toLowerCase()) ||
+          (r.guestPhone ?? "").toLowerCase().includes(q.toLowerCase()) ||
+          r.source.toLowerCase().includes(q.toLowerCase());
         const matchTab = tab === "all" || r.bucket === tab;
         return matchQ && matchTab;
       }),
@@ -261,7 +282,9 @@ function ReservationsPage() {
                 <TableRow>
                   <TableHead>Code</TableHead>
                   <TableHead>Guest</TableHead>
+                  <TableHead>Phone</TableHead>
                   <TableHead>Room</TableHead>
+                  <TableHead>Source</TableHead>
                   <TableHead>Check-in</TableHead>
                   <TableHead>Check-out</TableHead>
                   <TableHead>Nights</TableHead>
@@ -275,7 +298,11 @@ function ReservationsPage() {
                   <TableRow key={r.id}>
                     <TableCell className="font-mono text-xs">{r.code}</TableCell>
                     <TableCell className="font-medium">{r.guestName}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{r.guestPhone ?? "—"}</TableCell>
                     <TableCell>{r.roomLabel}</TableCell>
+                    <TableCell>
+                      <span className={`text-xs px-2 py-0.5 rounded border ${sourceColor(r.source)}`}>{r.source}</span>
+                    </TableCell>
                     <TableCell>{r.checkIn}</TableCell>
                     <TableCell>{r.checkOut}</TableCell>
                     <TableCell>{r.nights}</TableCell>
@@ -296,7 +323,7 @@ function ReservationsPage() {
                 ))}
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                       No reservations match your filters
                     </TableCell>
                   </TableRow>
@@ -323,6 +350,10 @@ function ReservationsPage() {
                 <Field label="Guest" value={sel.guestName} />
                 <Field label="Email" value={sel.guestEmail ?? "—"} />
                 <Field label="Phone" value={sel.guestPhone ?? "—"} />
+                <Field
+                  label="Booking Source"
+                  value={<span className={`text-xs px-2 py-0.5 rounded border ${sourceColor(sel.source)}`}>{sel.source}</span>}
+                />
                 <Field label="Room" value={sel.roomLabel} />
                 <Field label="Check-in" value={sel.checkIn} />
                 <Field label="Check-out" value={sel.checkOut} />

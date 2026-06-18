@@ -52,6 +52,7 @@ export interface Reservation {
   total_amount: number | null;
   nights: number;
   status: ReservationStatus;
+  source: string | null;
   created_at: string;
 }
 
@@ -158,6 +159,7 @@ export interface CreateReservationInput {
   room_id: string;
   check_in_date: string; // YYYY-MM-DD
   check_out_date: string; // YYYY-MM-DD
+  source?: string;
   notes?: string;
 }
 
