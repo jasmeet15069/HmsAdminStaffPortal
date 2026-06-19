@@ -33,6 +33,7 @@ import {
 import { useEffect, useState } from "react";
 import { useMHMS } from "@/lib/mhms-store";
 import { useAuth, isAuthenticated } from "@/lib/api/auth";
+import { useTenantModules } from "@/lib/api/hooks";
 import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -63,68 +64,88 @@ const INITIAL_NOTIFS: Notif[] = [
   { id: "n8",  icon: "📋", category: "Night Audit",   title: "Audit report ready",            body: "Night audit for 2026-06-16 has been completed and signed off.", time: "8 hrs ago", read: true },
 ];
 
-type NavLeaf = { to: string; label: string; icon: typeof LayoutDashboard };
+// `module` ties each link to a backend module key (see Go moduleRegistry). The
+// master-admin can mask any module per tenant; masked modules are hidden from
+// the sidebar and their routes are redirected away.
+type NavLeaf = { to: string; label: string; icon: typeof LayoutDashboard; module: string };
 type NavGroup = { label: string; icon: typeof LayoutDashboard; children: NavLeaf[] };
 type NavEntry = NavLeaf | NavGroup;
 
 const nav: NavEntry[] = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, module: "dashboard" },
   {
     label: "Front Office",
     icon: Briefcase,
     children: [
-      { to: "/reservations", label: "Reservations", icon: CalendarCheck },
-      { to: "/front-desk", label: "Front Desk", icon: Hotel },
-      { to: "/crm", label: "CRM & Loyalty", icon: Users },
+      { to: "/reservations", label: "Reservations", icon: CalendarCheck, module: "reservations" },
+      { to: "/front-desk", label: "Front Desk", icon: Hotel, module: "front_desk" },
+      { to: "/crm", label: "CRM & Loyalty", icon: Users, module: "crm" },
     ],
   },
   {
     label: "Restaurant",
     icon: UtensilsCrossed,
     children: [
-      { to: "/pos", label: "POS System", icon: UtensilsCrossed },
-      { to: "/restaurant", label: "Restaurant Mgmt", icon: ConciergeBell },
-      { to: "/menu-management", label: "Menu Management", icon: BookOpen },
+      { to: "/pos", label: "POS System", icon: UtensilsCrossed, module: "pos" },
+      { to: "/restaurant", label: "Restaurant Mgmt", icon: ConciergeBell, module: "restaurant" },
+      { to: "/menu-management", label: "Menu Management", icon: BookOpen, module: "menu_management" },
     ],
   },
   {
     label: "Operations",
     icon: ClipboardList,
     children: [
-      { to: "/housekeeping", label: "Housekeeping", icon: Sparkles },
-      { to: "/maintenance", label: "Maintenance", icon: Wrench },
-      { to: "/inventory", label: "Inventory", icon: Boxes },
-      { to: "/procurement", label: "Procurement", icon: ShoppingCart },
+      { to: "/housekeeping", label: "Housekeeping", icon: Sparkles, module: "housekeeping" },
+      { to: "/maintenance", label: "Maintenance", icon: Wrench, module: "maintenance" },
+      { to: "/inventory", label: "Inventory", icon: Boxes, module: "inventory" },
+      { to: "/procurement", label: "Procurement", icon: ShoppingCart, module: "procurement" },
     ],
   },
   {
     label: "Distribution",
     icon: Share2,
     children: [
-      { to: "/booking-engine", label: "Booking Engine", icon: Calendar },
-      { to: "/channel-manager", label: "Channel Manager", icon: Globe2 },
-      { to: "/revenue", label: "Revenue Mgmt", icon: TrendingUp },
+      { to: "/booking-engine", label: "Booking Engine", icon: Calendar, module: "booking_engine" },
+      { to: "/channel-manager", label: "Channel Manager", icon: Globe2, module: "channel_manager" },
+      { to: "/revenue", label: "Revenue Mgmt", icon: TrendingUp, module: "revenue" },
     ],
   },
   {
     label: "Finance",
     icon: Landmark,
     children: [
-      { to: "/billing", label: "Billing & Finance", icon: Receipt },
-      { to: "/night-audit", label: "Night Audit", icon: Moon },
-      { to: "/reports", label: "Reports & Analytics", icon: BarChart3 },
+      { to: "/billing", label: "Billing & Finance", icon: Receipt, module: "billing" },
+      { to: "/night-audit", label: "Night Audit", icon: Moon, module: "night_audit" },
+      { to: "/reports", label: "Reports & Analytics", icon: BarChart3, module: "reports" },
     ],
   },
   {
     label: "Administration",
     icon: Cog,
     children: [
-      { to: "/properties", label: "Properties", icon: Building2 },
-      { to: "/users", label: "Users & Roles", icon: ShieldCheck },
-      { to: "/admin", label: "System Admin", icon: Settings },
+      { to: "/properties", label: "Properties", icon: Building2, module: "properties" },
+      { to: "/users", label: "Users & Roles", icon: ShieldCheck, module: "users" },
+      { to: "/admin", label: "System Admin", icon: Settings, module: "admin" },
     ],
   },
 ];
+
+// Flat path→module prefixes for the route guard (includes non-nav detail
+// routes like /guests/:id under the "guests" module).
+const guardPrefixes: { prefix: string; module: string }[] = [
+  ...nav.flatMap((n) => ("children" in n ? n.children : [n])).map((l) => ({ prefix: l.to, module: l.module })),
+  { prefix: "/guests", module: "guests" },
+];
+
+// moduleForPath returns the module key controlling a path (longest prefix wins).
+function moduleForPath(path: string): string | null {
+  let best: { prefix: string; module: string } | null = null;
+  for (const g of guardPrefixes) {
+    const match = g.prefix === "/" ? path === "/" : path.startsWith(g.prefix);
+    if (match && (!best || g.prefix.length > best.prefix.length)) best = g;
+  }
+  return best?.module ?? null;
+}
 
 export default function AppShell() {
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -134,6 +155,15 @@ export default function AppShell() {
 
   const user = useAuth((s) => s.user);
   const signOut = useAuth((s) => s.signOut);
+
+  // Per-tenant module flags. Default-on while loading/offline so we never flash
+  // an empty sidebar or lock the user out before the flags arrive.
+  const modulesQ = useTenantModules();
+  const moduleFlags = modulesQ.data?.modules;
+  const moduleEnabled = (key: string) => (moduleFlags ? moduleFlags[key] !== false : true);
+  const visibleNav: NavEntry[] = nav
+    .map((n) => ("children" in n ? { ...n, children: n.children.filter((c) => moduleEnabled(c.module)) } : n))
+    .filter((n) => ("children" in n ? n.children.length > 0 : moduleEnabled(n.module)));
   // Avoid SSR/hydration mismatch: auth state lives in localStorage and is only
   // known after mount. Until then, render the neutral (signed-out) label.
   const [mounted, setMounted] = useState(false);
@@ -156,6 +186,16 @@ export default function AppShell() {
       navigate({ to: "/" });
     }
   }, [mounted, path, navigate]);
+
+  // Module guard: if the current route belongs to a module the tenant has had
+  // masked, bounce to the dashboard. Only acts once flags are loaded.
+  useEffect(() => {
+    if (!mounted || !moduleFlags) return;
+    const mod = moduleForPath(path);
+    if (mod && moduleFlags[mod] === false) {
+      navigate({ to: "/" });
+    }
+  }, [mounted, path, moduleFlags, navigate]);
 
   const displayName = authedUser?.email ?? "Guest";
   const initials =
@@ -194,7 +234,7 @@ export default function AppShell() {
           </div>
         </div>
         <nav className="sidebar-scroll flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
-          {nav.map((n) => {
+          {visibleNav.map((n) => {
             // Grouped (collapsible) section, e.g. Restaurant → POS / Mgmt / Menu.
             if ("children" in n) {
               const Icon = n.icon;

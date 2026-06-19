@@ -13,6 +13,7 @@ import type {
   ApiUser,
   CreatePosOrderBody,
   PosOrderApi,
+  TenantModulesResponse,
   BillingFolio,
   BillingFolioDetail,
   BillingInvoice,
@@ -378,6 +379,20 @@ export function useRemoveUserRole() {
     mutationFn: ({ userId, role }: { userId: string; role: string }) =>
       apiFetch(`/api/users/${userId}/roles/${role}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tenant modules (which portal modules are enabled for the current tenant).
+// Used to mask nav + guard routes. Cached aggressively — flags change rarely.
+// ---------------------------------------------------------------------------
+
+export function useTenantModules() {
+  return useQuery({
+    queryKey: ["tenant", "modules"] as const,
+    queryFn: () => apiFetch<TenantModulesResponse>("/api/tenant/modules"),
+    enabled: isAuthenticated(),
+    staleTime: 5 * 60_000,
   });
 }
 

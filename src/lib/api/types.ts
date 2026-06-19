@@ -301,6 +301,19 @@ export interface ApiUser {
 // POS Orders
 // ---------------------------------------------------------------------------
 
+export interface ModuleDef {
+  key: string;
+  label: string;
+  group: string;
+}
+
+// Response of GET /api/tenant/modules — the canonical module registry plus the
+// effective enabled/disabled flag for each module for the current tenant.
+export interface TenantModulesResponse {
+  registry: ModuleDef[];
+  modules: Record<string, boolean>;
+}
+
 export interface PosOrderItemApi {
   id?: string;
   name: string;
@@ -322,6 +335,12 @@ export interface PosOrderApi {
   delivery_address: string | null;
   status: "Open" | "Sent" | "Paid";
   total: number;
+  subtotal: number;
+  discount: number;
+  service_charge: number;
+  tax_rate: number;
+  tax_mode: "gst" | "igst";
+  tax: number;
   items: PosOrderItemApi[];
   created_at: string;
   updated_at: string;
@@ -336,5 +355,11 @@ export interface CreatePosOrderBody {
   delivery_address?: string | null;
   status: string;
   total: number;
+  subtotal: number;
+  discount: number;
+  service_charge: number;
+  tax_rate: number;
+  tax_mode: "gst" | "igst";
+  tax: number;
   items: PosOrderItemApi[];
 }

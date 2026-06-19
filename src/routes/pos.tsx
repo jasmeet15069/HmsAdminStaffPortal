@@ -191,6 +191,12 @@ const mapApiOrder = (o: PosOrderApi): POSOrder => ({
   items: o.items,
   status: o.status,
   total: o.total,
+  subtotal: o.subtotal,
+  discount: o.discount,
+  serviceCharge: o.service_charge,
+  taxRate: o.tax_rate,
+  taxMode: o.tax_mode,
+  tax: o.tax,
   createdAt: o.created_at,
 });
 
@@ -203,6 +209,12 @@ const toCreateBody = (o: Omit<POSOrder, "id" | "orderNumber" | "createdAt">): Cr
   delivery_address: o.deliveryAddress ?? null,
   status: o.status,
   total: o.total,
+  subtotal: o.subtotal ?? 0,
+  discount: o.discount ?? 0,
+  service_charge: o.serviceCharge ?? 0,
+  tax_rate: o.taxRate ?? 0,
+  tax_mode: o.taxMode ?? "gst",
+  tax: o.tax ?? 0,
   items: o.items,
 });
 
@@ -217,6 +229,12 @@ const toPatchBody = (patch: Partial<POSOrder>): Record<string, unknown> => {
   if (patch.deliveryAddress !== undefined) body.delivery_address = patch.deliveryAddress;
   if (patch.roomId !== undefined) body.room_id = patch.roomId;
   if (patch.outlet !== undefined) body.outlet = patch.outlet;
+  if (patch.subtotal !== undefined) body.subtotal = patch.subtotal;
+  if (patch.discount !== undefined) body.discount = patch.discount;
+  if (patch.serviceCharge !== undefined) body.service_charge = patch.serviceCharge;
+  if (patch.taxRate !== undefined) body.tax_rate = patch.taxRate;
+  if (patch.taxMode !== undefined) body.tax_mode = patch.taxMode;
+  if (patch.tax !== undefined) body.tax = patch.tax;
   return body;
 };
 
@@ -268,21 +286,52 @@ function KOTModal({ order, onClose }: { order: { outlet: string; table?: string;
   );
 }
 
+// Reconstruct a bill breakdown for the receipt. New orders carry the persisted
+// breakdown (subtotal/discount/service charge/tax rate/mode/tax); legacy & demo
+// orders that only stored `total` fall back to a tax-inclusive estimate at the
+// historical 18% intra-state GST so older bills still render sensibly.
+function deriveBill(order: POSOrder) {
+  if (order.subtotal != null && order.subtotal > 0) {
+    return {
+      subtotal: order.subtotal,
+      discount: order.discount ?? 0,
+      serviceCharge: order.serviceCharge ?? 0,
+      taxRate: order.taxRate ?? 0,
+      taxMode: order.taxMode ?? "gst",
+      tax: order.tax ?? 0,
+      total: order.total,
+    };
+  }
+  const tax = Math.round((order.total / 1.18) * 0.18);
+  return { subtotal: order.total - tax, discount: 0, serviceCharge: 0, taxRate: 18, taxMode: "gst" as const, tax, total: order.total };
+}
+
 // ── Receipt modal ──────────────────────────────────────────────────────────────
 function ReceiptModal({ order, onClose }: { order: POSOrder; onClose: () => void }) {
+  const bill = deriveBill(order);
+  // Split CGST/SGST so the two halves sum back to the exact tax (avoids a 1₹ drift).
+  const cgst = Math.round(bill.tax / 2);
+  const sgst = bill.tax - cgst;
+  const taxRowsHTML = bill.tax > 0
+    ? (bill.taxMode === "igst"
+        ? `<div class="row"><span>IGST ${bill.taxRate}%</span><span>${fmtINR(bill.tax)}</span></div>`
+        : `<div class="row"><span>CGST ${bill.taxRate / 2}%</span><span>${fmtINR(cgst)}</span></div><div class="row"><span>SGST ${bill.taxRate / 2}%</span><span>${fmtINR(sgst)}</span></div>`)
+    : "";
+  const discountRowHTML = bill.discount > 0 ? `<div class="row"><span>Discount</span><span>− ${fmtINR(bill.discount)}</span></div>` : "";
+  const svcRowHTML = bill.serviceCharge > 0 ? `<div class="row"><span>Service charge</span><span>${fmtINR(bill.serviceCharge)}</span></div>` : "";
+
   const printReceipt = () => {
     const rows = order.items.map((i) => `<tr><td>${i.qty}× ${i.name}</td><td class="right">${fmtINR(i.qty * i.price)}</td></tr>`).join("");
-    const tax = Math.round(order.total / 1.18 * 0.18);
-    const base = order.total - tax;
     printHTML(`Receipt — ${order.outlet}`, `
       <div class="brand"><div><h1>Hotel Harmony</h1><div class="muted">GST: 27AABCA1234X1Z5</div></div><div style="text-align:right"><h1>RECEIPT</h1><div class="muted">${order.createdAt}</div></div></div>
       <div><strong>Outlet:</strong> ${order.outlet} &nbsp;&nbsp; <strong>${order.channel === "Delivery" ? "Deliver to" : "Table"}:</strong> ${order.deliveryAddress ?? order.table ?? "Room Svc"}</div>
       <table style="margin-top:12px"><tr><th>Item</th><th class="right">Amount</th></tr>${rows}</table>
       <div class="totals">
-        <div class="row"><span>Subtotal</span><span>${fmtINR(base)}</span></div>
-        <div class="row"><span>CGST 9%</span><span>${fmtINR(Math.round(tax / 2))}</span></div>
-        <div class="row"><span>SGST 9%</span><span>${fmtINR(Math.round(tax / 2))}</span></div>
-        <div class="grand row"><span>Total</span><span>${fmtINR(order.total)}</span></div>
+        <div class="row"><span>Subtotal</span><span>${fmtINR(bill.subtotal)}</span></div>
+        ${discountRowHTML}
+        ${svcRowHTML}
+        ${taxRowsHTML}
+        <div class="grand row"><span>Total</span><span>${fmtINR(bill.total)}</span></div>
       </div>
       <div style="clear:both;margin-top:40px;text-align:center;color:#94a3b8;font-size:11px">Thank you for dining with us!</div>
     `);
@@ -302,11 +351,34 @@ function ReceiptModal({ order, onClose }: { order: POSOrder; onClose: () => void
         ))}
         <Separator className="my-1" />
         <div className="flex justify-between text-muted-foreground text-xs">
-          <span>CGST 9% + SGST 9%</span>
-          <span>{fmtINR(Math.round(order.total / 1.18 * 0.18))}</span>
+          <span>Subtotal</span><span>{fmtINR(bill.subtotal)}</span>
         </div>
+        {bill.discount > 0 && (
+          <div className="flex justify-between text-muted-foreground text-xs">
+            <span>Discount</span><span>− {fmtINR(bill.discount)}</span>
+          </div>
+        )}
+        {bill.serviceCharge > 0 && (
+          <div className="flex justify-between text-muted-foreground text-xs">
+            <span>Service charge</span><span>{fmtINR(bill.serviceCharge)}</span>
+          </div>
+        )}
+        {bill.tax > 0 && (bill.taxMode === "igst" ? (
+          <div className="flex justify-between text-muted-foreground text-xs">
+            <span>IGST {bill.taxRate}%</span><span>{fmtINR(bill.tax)}</span>
+          </div>
+        ) : (
+          <>
+            <div className="flex justify-between text-muted-foreground text-xs">
+              <span>CGST {bill.taxRate / 2}%</span><span>{fmtINR(cgst)}</span>
+            </div>
+            <div className="flex justify-between text-muted-foreground text-xs">
+              <span>SGST {bill.taxRate / 2}%</span><span>{fmtINR(sgst)}</span>
+            </div>
+          </>
+        ))}
         <div className="flex justify-between font-bold">
-          <span>Total</span><span>{fmtINR(order.total)}</span>
+          <span>Total</span><span>{fmtINR(bill.total)}</span>
         </div>
       </div>
       <div className="flex gap-2">
@@ -582,6 +654,12 @@ function POS() {
     deliveryAddress: channel === "Delivery" ? deliveryAddress || undefined : undefined,
     roomId: outlet === "Room Service" ? roomId : undefined,
     items: cart, status, total,
+    subtotal,
+    discount: itemDiscountAmt + discountAmt,
+    serviceCharge,
+    taxRate: taxEnabled ? gstRate : 0,
+    taxMode,
+    tax,
   });
 
   const handleSendKOT = () => {

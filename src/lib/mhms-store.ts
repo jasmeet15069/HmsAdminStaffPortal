@@ -121,6 +121,15 @@ export interface POSOrder {
   items: { name: string; qty: number; price: number; note?: string; seat?: number; discountPct?: number }[];
   status: "Open" | "Sent" | "Paid";
   total: number;
+  // Bill breakdown for accurate invoicing. Optional so legacy/demo orders
+  // (which only carry `total`) still type-check; the receipt falls back to a
+  // tax-inclusive estimate when these are absent.
+  subtotal?: number;
+  discount?: number;
+  serviceCharge?: number;
+  taxRate?: number;
+  taxMode?: "gst" | "igst";
+  tax?: number;
   createdAt: string;
 }
 
