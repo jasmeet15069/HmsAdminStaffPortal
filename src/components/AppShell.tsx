@@ -297,6 +297,21 @@ export default function AppShell() {
               </Link>
             );
           })}
+          {authedUser?.platform_admin && (
+            <div className="mt-2 pt-2 border-t border-sidebar-border">
+              <Link
+                to="/master"
+                className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                  path.startsWith("/master")
+                    ? "bg-sidebar-primary text-sidebar-primary-foreground font-medium"
+                    : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground text-sidebar-foreground/85"
+                }`}
+              >
+                <ShieldCheck className="size-4 shrink-0" />
+                <span className="truncate">Master Control</span>
+              </Link>
+            </div>
+          )}
         </nav>
         <div className="p-3 border-t border-sidebar-border text-[11px] text-sidebar-foreground/60">
           v2.0 · Enterprise

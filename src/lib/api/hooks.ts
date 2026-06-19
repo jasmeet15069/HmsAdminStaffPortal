@@ -14,6 +14,9 @@ import type {
   CreatePosOrderBody,
   PosOrderApi,
   TenantModulesResponse,
+  PlatformPlan,
+  PlatformTenant,
+  CreateTenantBody,
   BillingFolio,
   BillingFolioDetail,
   BillingInvoice,
@@ -393,6 +396,64 @@ export function useTenantModules() {
     queryFn: () => apiFetch<TenantModulesResponse>("/api/tenant/modules"),
     enabled: isAuthenticated(),
     staleTime: 5 * 60_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Platform / master-admin (cross-tenant; backend gates on platform_admin)
+// ---------------------------------------------------------------------------
+
+export function usePlatformTenants() {
+  return useQuery({
+    queryKey: ["platform", "tenants"] as const,
+    queryFn: () => apiFetch<PlatformTenant[] | null>("/api/platform/tenants").then((t) => t ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function usePlatformPlans() {
+  return useQuery({
+    queryKey: ["platform", "plans"] as const,
+    queryFn: () => apiFetch<PlatformPlan[] | null>("/api/platform/plans").then((p) => p ?? []),
+    enabled: isAuthenticated(),
+    staleTime: 10 * 60_000,
+  });
+}
+
+export function useCreatePlatformTenant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateTenantBody) => apiFetch("/api/platform/tenants", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["platform", "tenants"] }),
+  });
+}
+
+export function useUpdateTenantPlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, plan_tier, is_active }: { id: string; plan_tier: string; is_active?: boolean }) =>
+      apiFetch(`/api/platform/tenants/${id}/plan`, { method: "PUT", body: { plan_tier, is_active } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["platform", "tenants"] }),
+  });
+}
+
+export function usePlatformTenantModules(id: string | null) {
+  return useQuery({
+    queryKey: ["platform", "tenant-modules", id] as const,
+    queryFn: () => apiFetch<TenantModulesResponse>(`/api/platform/tenants/${id}/modules`),
+    enabled: !!id && isAuthenticated(),
+  });
+}
+
+export function useUpdatePlatformTenantModules() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, modules }: { id: string; modules: Record<string, boolean> }) =>
+      apiFetch(`/api/platform/tenants/${id}/modules`, { method: "PUT", body: { modules } }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["platform", "tenant-modules", v.id] });
+      qc.invalidateQueries({ queryKey: ["tenant", "modules"] });
+    },
   });
 }
 

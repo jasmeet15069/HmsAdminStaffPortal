@@ -309,9 +309,48 @@ export interface ModuleDef {
 
 // Response of GET /api/tenant/modules — the canonical module registry plus the
 // effective enabled/disabled flag for each module for the current tenant.
+// The platform (master-admin) variant also returns the raw stored overrides.
 export interface TenantModulesResponse {
   registry: ModuleDef[];
   modules: Record<string, boolean>;
+  overrides?: Record<string, boolean>;
+}
+
+// Plan tier as returned by GET /api/platform/plans (only id+name are needed by
+// the master UI; other fields exist but are not consumed here).
+export interface PlatformPlan {
+  id: string;
+  name: string;
+  [k: string]: unknown;
+}
+
+// A client tenant as returned by GET /api/platform/tenants.
+export interface PlatformTenant {
+  id: string;
+  name: string;
+  slug: string;
+  plan_tier: string;
+  plan_name: string;
+  is_active: boolean;
+  country: string | null;
+  currency: string | null;
+  rooms_used: number;
+  rooms_max?: number | null;
+  users_used: number;
+  users_max?: number | null;
+  properties_used: number;
+  properties_max?: number | null;
+  database_name?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateTenantBody {
+  name: string;
+  slug?: string;
+  plan_tier: string;
+  country?: string;
+  currency?: string;
 }
 
 export interface PosOrderItemApi {

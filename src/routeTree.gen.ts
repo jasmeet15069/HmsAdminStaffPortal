@@ -19,6 +19,7 @@ import { Route as ProcurementRouteImport } from './routes/procurement'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as NightAuditRouteImport } from './routes/night-audit'
 import { Route as MenuManagementRouteImport } from './routes/menu-management'
+import { Route as MasterRouteImport } from './routes/master'
 import { Route as MaintenanceRouteImport } from './routes/maintenance'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as InventoryRouteImport } from './routes/inventory'
@@ -82,6 +83,11 @@ const NightAuditRoute = NightAuditRouteImport.update({
 const MenuManagementRoute = MenuManagementRouteImport.update({
   id: '/menu-management',
   path: '/menu-management',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MasterRoute = MasterRouteImport.update({
+  id: '/master',
+  path: '/master',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MaintenanceRoute = MaintenanceRouteImport.update({
@@ -167,6 +173,7 @@ export interface FileRoutesByFullPath {
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
+  '/master': typeof MasterRoute
   '/menu-management': typeof MenuManagementRoute
   '/night-audit': typeof NightAuditRoute
   '/pos': typeof PosRoute
@@ -193,6 +200,7 @@ export interface FileRoutesByTo {
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
+  '/master': typeof MasterRoute
   '/menu-management': typeof MenuManagementRoute
   '/night-audit': typeof NightAuditRoute
   '/pos': typeof PosRoute
@@ -220,6 +228,7 @@ export interface FileRoutesById {
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
+  '/master': typeof MasterRoute
   '/menu-management': typeof MenuManagementRoute
   '/night-audit': typeof NightAuditRoute
   '/pos': typeof PosRoute
@@ -248,6 +257,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/login'
     | '/maintenance'
+    | '/master'
     | '/menu-management'
     | '/night-audit'
     | '/pos'
@@ -274,6 +284,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/login'
     | '/maintenance'
+    | '/master'
     | '/menu-management'
     | '/night-audit'
     | '/pos'
@@ -300,6 +311,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/login'
     | '/maintenance'
+    | '/master'
     | '/menu-management'
     | '/night-audit'
     | '/pos'
@@ -327,6 +339,7 @@ export interface RootRouteChildren {
   InventoryRoute: typeof InventoryRoute
   LoginRoute: typeof LoginRoute
   MaintenanceRoute: typeof MaintenanceRoute
+  MasterRoute: typeof MasterRoute
   MenuManagementRoute: typeof MenuManagementRoute
   NightAuditRoute: typeof NightAuditRoute
   PosRoute: typeof PosRoute
@@ -410,6 +423,13 @@ declare module '@tanstack/react-router' {
       path: '/menu-management'
       fullPath: '/menu-management'
       preLoaderRoute: typeof MenuManagementRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/master': {
+      id: '/master'
+      path: '/master'
+      fullPath: '/master'
+      preLoaderRoute: typeof MasterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/maintenance': {
@@ -539,6 +559,7 @@ const rootRouteChildren: RootRouteChildren = {
   InventoryRoute: InventoryRoute,
   LoginRoute: LoginRoute,
   MaintenanceRoute: MaintenanceRoute,
+  MasterRoute: MasterRoute,
   MenuManagementRoute: MenuManagementRoute,
   NightAuditRoute: NightAuditRoute,
   PosRoute: PosRoute,
