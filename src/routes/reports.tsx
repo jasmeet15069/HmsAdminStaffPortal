@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
+import { useConsolidatedReport } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +46,7 @@ export const Route = createFileRoute("/reports")({
 
 function Reports() {
   const { folios, reservations, payments, guests, rooms } = useMHMS();
+  const liveReport = useConsolidatedReport().data;
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("All");
 
@@ -121,10 +123,10 @@ function Reports() {
         {/* Overview */}
         <TabsContent value="overview">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-            <Stat label="YTD Revenue" value={fmtINR(totalRevenue)} tone="success" hint="Jan–Jun 2026" />
-            <Stat label="Avg Occupancy" value={`${avgOcc}%`} tone="info" hint="Year to date" />
-            <Stat label="Avg ADR" value={fmtINR(avgAdr)} hint="Year to date" />
-            <Stat label="Total Bookings" value={reservations.length} hint="All statuses" />
+            <Stat label="Total Revenue" value={fmtINR(liveReport?.total_revenue ?? totalRevenue)} tone="success" hint={liveReport ? "Live · completed payments" : "Jan–Jun 2026"} />
+            <Stat label="Occupancy" value={`${Math.round(liveReport?.occupancy_rate ?? avgOcc)}%`} tone="info" hint={liveReport ? "Live · current" : "Year to date"} />
+            <Stat label="Avg Daily Rate" value={fmtINR(liveReport?.avg_daily_rate ?? avgAdr)} hint={liveReport ? "Live · ADR" : "Year to date"} />
+            <Stat label="Total Bookings" value={liveReport?.total_bookings ?? reservations.length} hint={liveReport ? "Live · active" : "All statuses"} />
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
             <Card className="lg:col-span-2 p-5">

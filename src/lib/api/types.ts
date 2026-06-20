@@ -284,6 +284,26 @@ export interface CloseDayResponse {
   };
 }
 
+// Consolidated operational report (GET /api/reports/consolidated). Returned by
+// the Go OperationsHandler.ConsolidatedReport — one CTE over rooms, payments,
+// invoices, guest_stays and complaints for the caller's hotel.
+export interface ConsolidatedReport {
+  total_rooms: number;
+  occupied_rooms: number;
+  available_rooms: number;
+  total_revenue: number;
+  pending_payments: number;
+  active_bookings: number;
+  arrivals_today: number;
+  departures_today: number;
+  open_complaints: number;
+  occupancy_rate: number;
+  avg_occupancy: number;
+  total_bookings: number;
+  avg_daily_rate: number;
+  revpar: number;
+}
+
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------

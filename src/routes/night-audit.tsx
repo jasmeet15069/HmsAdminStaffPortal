@@ -1,35 +1,25 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
-import { useMHMS, fmtINR } from "@/lib/mhms-store";
+import { fmtINR } from "@/lib/mhms-store";
+import {
+  useConsolidatedReport,
+  useNightAuditRevenue,
+  useNightAuditChecklist,
+  useNightAuditReports,
+  useCloseDay,
+} from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { CheckCircle2, Clock, Moon, Download, AlertTriangle, Info } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle2, Clock, Moon, Download, AlertTriangle } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { downloadCSV, printHTML } from "@/lib/csv";
+import { downloadCSV } from "@/lib/csv";
 
-const STEPS = [
-  { label: "Verify all arrivals processed", desc: "Confirm all expected arrivals are checked in; flag no-shows.", category: "Front Desk" },
-  { label: "Confirm departures completed", desc: "Verify all departures are processed and rooms handed to housekeeping.", category: "Front Desk" },
-  { label: "Post room & tax charges", desc: "Auto-post nightly room rate and applicable GST to all in-house folios.", category: "Billing" },
-  { label: "Reconcile POS revenue", desc: "Match POS orders to folio charges and cash drawer totals.", category: "F&B" },
-  { label: "Process credit card batch", desc: "Submit end-of-day card transactions to payment gateway for settlement.", category: "Billing" },
-  { label: "Handle no-shows", desc: "Apply no-show charges per policy; release rooms back to inventory.", category: "Front Desk" },
-  { label: "Review AR aging", desc: "Identify folios with balances >30 days and flag for follow-up.", category: "Finance" },
-  { label: "Update statistics", desc: "Compute final occupancy, ADR, and RevPAR for the business date.", category: "Revenue" },
-  { label: "Generate audit reports", desc: "Print or save the night audit summary, arrivals, departures, and revenue.", category: "Reports" },
-  { label: "Roll business date", desc: "Advance the system business date to the next day.", category: "System" },
-];
-
-const AR_AGING = [
-  { folio: "RES2001", guest: "Priya Sharma", amount: 45000, age: "0-30 days", status: "Current" },
-  { folio: "RES1988", guest: "Raj Mehta Enterprises", amount: 128000, age: "31-60 days", status: "Overdue" },
-  { folio: "RES1976", guest: "Sunflower Corp Ltd.", amount: 67500, age: "61-90 days", status: "Overdue" },
-  { folio: "RES1965", guest: "Mr. Arjun Pillai", amount: 14200, age: ">90 days", status: "Collections" },
-];
-
+// Procedural metadata for the standard night-audit steps. The completion state
+// is driven by the live checklist endpoint; this only supplies labels/category
+// for any step the backend hasn't named.
 const STEP_CATEGORY_COLORS: Record<string, string> = {
   "Front Desk": "bg-info/15 text-info",
   Billing: "bg-success/15 text-success",
@@ -38,6 +28,7 @@ const STEP_CATEGORY_COLORS: Record<string, string> = {
   Revenue: "bg-warning/15 text-warning-foreground",
   Reports: "bg-muted text-muted-foreground",
   System: "bg-destructive/15 text-destructive",
+  Audit: "bg-muted text-muted-foreground",
 };
 
 export const Route = createFileRoute("/night-audit")({
@@ -46,101 +37,115 @@ export const Route = createFileRoute("/night-audit")({
 });
 
 function NightAudit() {
-  const { reservations, folios, payments, businessDate, rollBusinessDate, auditLog, logAudit, orders, guests } = useMHMS();
-  const [done, setDone] = useState<number[]>([]);
-  const today = businessDate;
+  const reportQ = useConsolidatedReport();
+  const revenueQ = useNightAuditRevenue();
+  const checklistQ = useNightAuditChecklist();
+  const reportsQ = useNightAuditReports();
+  const closeDay = useCloseDay();
 
-  const arrivals = reservations.filter((r) => r.checkIn === today);
-  const departures = reservations.filter((r) => r.checkOut === today);
-  const inHouse = reservations.filter((r) => r.status === "checked_in");
-  const noShows = reservations.filter((r) => r.checkIn === today && r.status === "confirmed");
-  const revenue = folios.reduce((s, f) => s + f.amount, 0);
-  const collections = payments.reduce((s, p) => s + p.amount, 0);
-  const posRev = orders.filter((o) => o.status === "Paid").reduce((s, o) => s + o.total, 0);
-  const outstanding = revenue - collections;
+  const r = reportQ.data;
+  const checklist = useMemo(() => checklistQ.data ?? [], [checklistQ.data]);
+  const revenue = revenueQ.data ?? [];
+  const pastReports = reportsQ.data ?? [];
 
-  const progress = Math.round((done.length / STEPS.length) * 100);
+  // Live metrics from the consolidated report.
+  const arrivals = r?.arrivals_today ?? 0;
+  const departures = r?.departures_today ?? 0;
+  const inHouse = r?.occupied_rooms ?? 0;
+  const roomRevenue = r?.total_revenue ?? 0;
+  const outstanding = r?.pending_payments ?? 0;
+  const occupancy = r?.occupancy_rate ?? 0;
+  const openComplaints = r?.open_complaints ?? 0;
+
+  // Checklist completion: seed from the backend `completed` flags; the operator
+  // can additionally mark steps run during this session (the day is finalised by
+  // Complete Audit, which calls the close-day endpoint).
+  const backendDone = checklist.filter((s) => s.completed).length;
+  const [localRun, setLocalRun] = useState<Set<number>>(new Set());
+  const isStepDone = (i: number) => checklist[i]?.completed || localRun.has(i);
+  const doneCount = checklist.reduce((n, _s, i) => (isStepDone(i) ? n + 1 : n), 0);
+  const total = checklist.length;
+  const progress = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+  const allDone = total > 0 && doneCount === total;
 
   const exportAudit = () => {
-    downloadCSV(`night-audit-${today}.csv`, [
-      { metric: "Business Date", value: today },
-      { metric: "Arrivals Expected", value: arrivals.length },
-      { metric: "Departures", value: departures.length },
-      { metric: "In-House Guests", value: inHouse.length },
-      { metric: "No-Shows", value: noShows.length },
-      { metric: "Room Revenue", value: revenue },
-      { metric: "POS Revenue", value: posRev },
-      { metric: "Collections", value: collections },
+    downloadCSV(`night-audit.csv`, [
+      { metric: "Arrivals Today", value: arrivals },
+      { metric: "Departures Today", value: departures },
+      { metric: "In-House (occupied rooms)", value: inHouse },
+      { metric: "Occupancy %", value: occupancy.toFixed(1) },
+      { metric: "Room Revenue", value: roomRevenue },
       { metric: "Outstanding AR", value: outstanding },
+      { metric: "Open Complaints", value: openComplaints },
     ]);
     toast.success("Audit exported");
   };
 
-  const printAuditReport = () => {
-    const arrRows = arrivals.map((r) => `<tr><td>${r.code}</td><td>${guests.find((g) => g.id === r.guestId)?.name ?? "—"}</td><td>${r.checkIn}</td><td class="right">${fmtINR(r.rate)}</td></tr>`).join("");
-    const depRows = departures.map((r) => `<tr><td>${r.code}</td><td>${guests.find((g) => g.id === r.guestId)?.name ?? "—"}</td><td>${r.checkOut}</td><td class="right">${fmtINR(r.rate)}</td></tr>`).join("");
-    printHTML(`Night Audit ${today}`, `
-      <div class="brand"><div><h1>Night Audit Report</h1><div class="muted">Hotel Harmony</div></div><div style="text-align:right"><h1>${today}</h1></div></div>
-      <h2>Summary</h2>
-      <table>
-        <tr><th>Metric</th><th class="right">Value</th></tr>
-        <tr><td>Arrivals</td><td class="right">${arrivals.length}</td></tr>
-        <tr><td>Departures</td><td class="right">${departures.length}</td></tr>
-        <tr><td>In-House Guests</td><td class="right">${inHouse.length}</td></tr>
-        <tr><td>No-Shows</td><td class="right">${noShows.length}</td></tr>
-        <tr><td>Room Revenue</td><td class="right">${fmtINR(revenue)}</td></tr>
-        <tr><td>POS Revenue</td><td class="right">${fmtINR(posRev)}</td></tr>
-        <tr><td>Collections</td><td class="right">${fmtINR(collections)}</td></tr>
-        <tr><td>Outstanding AR</td><td class="right">${fmtINR(outstanding)}</td></tr>
-      </table>
-      <h2>Arrivals</h2>
-      <table><tr><th>Code</th><th>Guest</th><th>Date</th><th class="right">Rate</th></tr>${arrRows || `<tr><td colspan="4" class="muted">None today</td></tr>`}</table>
-      <h2>Departures</h2>
-      <table><tr><th>Code</th><th>Guest</th><th>Date</th><th class="right">Rate</th></tr>${depRows || `<tr><td colspan="4" class="muted">None today</td></tr>`}</table>
-    `);
+  const runStep = (i: number) => {
+    setLocalRun((prev) => new Set(prev).add(i));
+    toast.success(`Step ${i + 1} marked complete`);
   };
+
+  const completeAudit = () => {
+    closeDay.mutate(undefined, {
+      onSuccess: (res) => {
+        toast.success(`Night audit complete — business date ${res.audit_date} closed.`);
+        setLocalRun(new Set());
+      },
+      onError: (e) => toast.error(e instanceof Error ? e.message : "Close day failed"),
+    });
+  };
+
+  const loading = reportQ.isLoading || checklistQ.isLoading;
 
   return (
     <>
       <PageHeader
         title="Night Audit"
-        description={`Business date: ${today}`}
+        description={r ? "Live operational close-of-day" : "Sign in to load live audit data"}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={exportAudit} className="gap-1.5"><Download className="size-4" />Export CSV</Button>
-            <Button variant="outline" size="sm" onClick={printAuditReport}>Print Report</Button>
-            <Button size="sm" disabled={done.length !== STEPS.length} className="gap-1.5"
-              onClick={() => { rollBusinessDate(); toast.success("Night audit complete — business date advanced."); setDone([]); }}>
-              <Moon className="size-4" /> Complete Audit
+            <Button variant="outline" size="sm" onClick={exportAudit} className="gap-1.5">
+              <Download className="size-4" />Export CSV
+            </Button>
+            <Button
+              size="sm"
+              disabled={!allDone || closeDay.isPending}
+              className="gap-1.5"
+              onClick={completeAudit}
+            >
+              <Moon className="size-4" /> {closeDay.isPending ? "Closing…" : "Complete Audit"}
             </Button>
           </div>
         }
       />
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
-        <Stat label="Arrivals" value={arrivals.length} hint="Expected today" />
-        <Stat label="Departures" value={departures.length} hint="Checked out today" />
-        <Stat label="In-House" value={inHouse.length} hint="Currently staying" tone="info" />
-        <Stat label="Day Revenue" value={fmtINR(revenue)} tone="success" hint="Room charges" />
-        <Stat label="Outstanding" value={fmtINR(outstanding)} tone={outstanding > 0 ? "warning" : "success"} hint="Uncollected" />
+        <Stat label="Arrivals" value={arrivals} hint="Expected today" />
+        <Stat label="Departures" value={departures} hint="Checked out today" />
+        <Stat label="In-House" value={inHouse} hint="Occupied rooms" tone="info" />
+        <Stat label="Day Revenue" value={fmtINR(roomRevenue)} tone="success" hint="Completed payments" />
+        <Stat
+          label="Outstanding"
+          value={fmtINR(outstanding)}
+          tone={outstanding > 0 ? "warning" : "success"}
+          hint="Unpaid invoices"
+        />
       </div>
 
       <Tabs defaultValue="checklist">
         <TabsList className="mb-4">
           <TabsTrigger value="checklist">
             <Moon className="size-3.5 mr-1.5" />Audit Checklist
-            <Badge variant="outline" className="ml-1.5 text-[10px]">{done.length}/{STEPS.length}</Badge>
+            <Badge variant="outline" className="ml-1.5 text-[10px]">{doneCount}/{total}</Badge>
           </TabsTrigger>
-          <TabsTrigger value="summary">Revenue Summary</TabsTrigger>
-          <TabsTrigger value="ar">
-            AR Aging
-            {AR_AGING.filter((a) => a.status !== "Current").length > 0 && (
-              <Badge variant="destructive" className="ml-1.5 text-[10px] size-4 p-0 grid place-items-center">
-                {AR_AGING.filter((a) => a.status !== "Current").length}
-              </Badge>
+          <TabsTrigger value="summary">Revenue Audit</TabsTrigger>
+          <TabsTrigger value="reports">
+            Past Audits
+            {pastReports.length > 0 && (
+              <Badge variant="outline" className="ml-1.5 text-[10px]">{pastReports.length}</Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="log">Audit Log</TabsTrigger>
         </TabsList>
 
         {/* Checklist */}
@@ -156,184 +161,140 @@ function NightAudit() {
                   {progress}%
                 </div>
               </div>
-              <div className="space-y-2">
-                {STEPS.map((s, i) => {
-                  const isDone = done.includes(i);
-                  const isNext = !isDone && done.length === i;
-                  return (
-                    <div key={s.label} className={`p-3 rounded-lg border transition-colors ${isDone ? "bg-success/5 border-success/30" : isNext ? "border-primary bg-primary/5" : "border-transparent bg-muted/30"}`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3 min-w-0">
-                          {isDone
-                            ? <CheckCircle2 className="size-5 text-success shrink-0 mt-0.5" />
-                            : <Clock className={`size-5 shrink-0 mt-0.5 ${isNext ? "text-primary" : "text-muted-foreground"}`} />}
-                          <div>
+              {loading ? (
+                <div className="py-10 text-center text-sm text-muted-foreground">Loading checklist…</div>
+              ) : total === 0 ? (
+                <div className="py-10 text-center text-sm text-muted-foreground">
+                  No checklist available. Sign in to load the live night-audit checklist.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {checklist.map((s, i) => {
+                    const isDone = isStepDone(i);
+                    const isNext = !isDone && doneCount === i;
+                    return (
+                      <div
+                        key={s.task}
+                        className={`p-3 rounded-lg border transition-colors ${isDone ? "bg-success/5 border-success/30" : isNext ? "border-primary bg-primary/5" : "border-transparent bg-muted/30"}`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-3 min-w-0">
+                            {isDone ? (
+                              <CheckCircle2 className="size-5 text-success shrink-0 mt-0.5" />
+                            ) : (
+                              <Clock className={`size-5 shrink-0 mt-0.5 ${isNext ? "text-primary" : "text-muted-foreground"}`} />
+                            )}
                             <div className={`font-medium text-sm ${isDone ? "line-through text-muted-foreground" : ""}`}>
-                              {i + 1}. {s.label}
+                              {i + 1}. {s.task}
                             </div>
-                            <div className="text-xs text-muted-foreground mt-0.5">{s.desc}</div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {!isDone && (
+                              <Button size="sm" className="h-7 px-2" onClick={() => runStep(i)}>Run</Button>
+                            )}
+                            {isDone && (
+                              <Badge variant="outline" className="bg-success/15 text-success border-success/30 text-[10px]">Done</Badge>
+                            )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Badge className={`text-[10px] ${STEP_CATEGORY_COLORS[s.category] ?? "bg-muted text-muted-foreground"}`}>{s.category}</Badge>
-                          {!isDone && (
-                            <Button size="sm" className="h-7 px-2" disabled={!isNext}
-                              onClick={() => { setDone([...done, i]); logAudit("Night Audit", `Step ${i + 1}: ${s.label}`); toast.success(`Step ${i + 1} complete`); }}>
-                              Run
-                            </Button>
-                          )}
-                          {isDone && <Badge variant="outline" className="bg-success/15 text-success border-success/30 text-[10px]">Done</Badge>}
-                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </Card>
             <div className="space-y-3">
               <Card className="p-4">
                 <h3 className="font-semibold text-sm mb-3">Today's Highlights</h3>
                 <div className="space-y-2 text-sm">
                   {[
-                    ["Arrivals today", arrivals.length, ""],
-                    ["Departures today", departures.length, ""],
-                    ["Currently in-house", inHouse.length, "text-info"],
-                    ["No-shows", noShows.length, noShows.length > 0 ? "text-warning-foreground" : "text-success"],
-                    ["POS revenue", fmtINR(posRev), "text-success"],
-                    ["Total collected", fmtINR(collections), "text-success"],
+                    ["Arrivals today", String(arrivals), ""],
+                    ["Departures today", String(departures), ""],
+                    ["Occupied rooms", String(inHouse), "text-info"],
+                    ["Occupancy", `${occupancy.toFixed(1)}%`, ""],
+                    ["Open complaints", String(openComplaints), openComplaints > 0 ? "text-warning-foreground" : "text-success"],
+                    ["Room revenue", fmtINR(roomRevenue), "text-success"],
                     ["Outstanding AR", fmtINR(outstanding), outstanding > 0 ? "text-destructive" : "text-success"],
                   ].map(([label, val, cls]) => (
-                    <div key={label as string} className="flex justify-between">
+                    <div key={label} className="flex justify-between">
                       <span className="text-muted-foreground">{label}</span>
                       <span className={`font-medium ${cls}`}>{val}</span>
                     </div>
                   ))}
                 </div>
               </Card>
-              {noShows.length > 0 && (
+              {backendDone < total && total > 0 && (
                 <Card className="p-4 border-warning/30 bg-warning/5">
-                  <div className="flex items-center gap-2 text-warning-foreground font-medium text-sm mb-2">
+                  <div className="flex items-center gap-2 text-warning-foreground font-medium text-sm">
                     <AlertTriangle className="size-4" />
-                    {noShows.length} No-Show{noShows.length > 1 ? "s" : ""} to Process
+                    {total - backendDone} step{total - backendDone > 1 ? "s" : ""} pending before close
                   </div>
-                  {noShows.slice(0, 3).map((r) => (
-                    <div key={r.id} className="text-xs text-muted-foreground">{r.code} · {guests.find((g) => g.id === r.guestId)?.name}</div>
-                  ))}
                 </Card>
               )}
             </div>
           </div>
         </TabsContent>
 
-        {/* Revenue Summary */}
+        {/* Revenue Audit */}
         <TabsContent value="summary">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card className="p-5">
-              <h3 className="font-semibold mb-4">Revenue Breakdown — {today}</h3>
-              <div className="space-y-3">
-                {[
-                  { label: "Room Revenue", amount: revenue, accent: false },
-                  { label: "POS / F&B Revenue", amount: posRev, accent: false },
-                  { label: "Total Revenue", amount: revenue + posRev, accent: true },
-                  { label: "Collections Received", amount: collections, accent: false },
-                  { label: "Outstanding Balance", amount: outstanding, accent: true },
-                ].map((item, i) => (
-                  <div key={item.label} className={`flex justify-between text-sm ${item.accent ? "font-semibold text-base pt-2 border-t" : ""}`}>
-                    <span className={item.accent ? "" : "text-muted-foreground"}>{item.label}</span>
-                    <span className={outstanding > 0 && item.label === "Outstanding Balance" ? "text-destructive" : item.amount > 0 && item.accent ? "text-success" : ""}>{fmtINR(item.amount)}</span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-            <Card className="p-5">
-              <h3 className="font-semibold mb-4">Cash Drawer Reconciliation</h3>
-              <div className="space-y-3 text-sm">
-                {[
-                  { label: "Opening balance", amount: 25000 },
-                  { label: "Cash received (payments)", amount: collections * 0.35 },
-                  { label: "Cash expenses / petty cash", amount: -4200 },
-                  { label: "Expected closing balance", amount: 25000 + collections * 0.35 - 4200 },
-                ].map((item) => (
-                  <div key={item.label} className="flex justify-between">
-                    <span className="text-muted-foreground">{item.label}</span>
-                    <span className="font-medium">{fmtINR(Math.round(item.amount))}</span>
-                  </div>
-                ))}
-                <div className="border-t pt-3">
-                  <div className="flex justify-between text-sm font-semibold">
-                    <span>Variance</span>
-                    <span className="text-success">₹0.00</span>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* AR Aging */}
-        <TabsContent value="ar">
           <Card>
-            <div className="p-4 border-b flex items-center gap-2">
-              <Info className="size-4 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Accounts receivable aging — review and follow up on overdue balances.</p>
+            <div className="p-4 border-b">
+              <h3 className="font-semibold">Revenue Audit — Expected vs Actual</h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    {["Folio", "Guest / Company", "Amount", "Age", "Status", "Action"].map((h) => (
+                    {["Category", "Expected", "Actual", "Variance"].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {AR_AGING.map((a) => (
-                    <tr key={a.folio} className="border-b last:border-0 hover:bg-accent/5">
-                      <td className="px-4 py-3 font-mono text-xs">{a.folio}</td>
-                      <td className="px-4 py-3 font-medium">{a.guest}</td>
-                      <td className="px-4 py-3 font-medium">{fmtINR(a.amount)}</td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{a.age}</td>
-                      <td className="px-4 py-3">
-                        <Badge className={`text-[10px] ${a.status === "Current" ? "bg-success/15 text-success" : a.status === "Overdue" ? "bg-warning/15 text-warning-foreground" : "bg-destructive/15 text-destructive"}`}>
-                          {a.status}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
-                          onClick={() => toast.success(`Follow-up sent for ${a.folio}`)}>
-                          {a.status === "Collections" ? "Send to Collections" : "Follow Up"}
-                        </Button>
+                  {revenue.map((row) => (
+                    <tr key={row.category} className="border-b last:border-0 hover:bg-accent/5">
+                      <td className="px-4 py-3 font-medium">{row.category}</td>
+                      <td className="px-4 py-3">{fmtINR(row.expected)}</td>
+                      <td className="px-4 py-3">{fmtINR(row.actual)}</td>
+                      <td className={`px-4 py-3 font-medium ${row.difference < 0 ? "text-destructive" : row.difference > 0 ? "text-success" : ""}`}>
+                        {fmtINR(row.difference)}
                       </td>
                     </tr>
                   ))}
+                  {revenue.length === 0 && (
+                    <tr><td colSpan={4} className="text-center py-10 text-muted-foreground">{revenueQ.isLoading ? "Loading…" : "No revenue data for the current business date."}</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </Card>
         </TabsContent>
 
-        {/* Audit Log */}
-        <TabsContent value="log">
+        {/* Past Audits */}
+        <TabsContent value="reports">
           <Card>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    {["Date", "User", "Action"].map((h) => (
+                    {["Audit Date", "Status", "Closed By", "Created"].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {auditLog.slice(0, 25).map((a) => (
+                  {pastReports.map((a) => (
                     <tr key={a.id} className="border-b last:border-0 hover:bg-accent/5">
-                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{a.date}</td>
-                      <td className="px-4 py-3 font-medium">{a.user}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{a.action}</td>
+                      <td className="px-4 py-3 font-medium whitespace-nowrap">{a.audit_date}</td>
+                      <td className="px-4 py-3">
+                        <Badge className={`text-[10px] ${STEP_CATEGORY_COLORS["Reports"]}`}>{a.status}</Badge>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{a.closed_by ?? "—"}</td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{a.created_at}</td>
                     </tr>
                   ))}
-                  {auditLog.length === 0 && (
-                    <tr><td colSpan={3} className="text-center py-10 text-muted-foreground">No audit events yet. Run the checklist to populate the log.</td></tr>
+                  {pastReports.length === 0 && (
+                    <tr><td colSpan={4} className="text-center py-10 text-muted-foreground">{reportsQ.isLoading ? "Loading…" : "No past night audits recorded yet."}</td></tr>
                   )}
                 </tbody>
               </table>

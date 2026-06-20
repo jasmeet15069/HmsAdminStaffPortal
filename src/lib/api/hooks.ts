@@ -22,6 +22,7 @@ import type {
   BillingInvoice,
   BillingTransaction,
   CloseDayResponse,
+  ConsolidatedReport,
   CreateReservationInput,
   CreateRoomInput,
   DashboardData,
@@ -327,6 +328,18 @@ export function useCloseDay() {
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       qc.invalidateQueries({ queryKey: ["billing"] });
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
+
+export function useConsolidatedReport() {
+  return useQuery({
+    queryKey: ["reports", "consolidated"] as const,
+    queryFn: () => apiFetch<ConsolidatedReport>("/api/reports/consolidated"),
+    enabled: isAuthenticated(),
   });
 }
 
