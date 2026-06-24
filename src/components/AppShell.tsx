@@ -87,6 +87,7 @@ const nav: NavEntry[] = [
     icon: UtensilsCrossed,
     children: [
       { to: "/pos", label: "POS System", icon: UtensilsCrossed, module: "pos" },
+      { to: "/pos-dinein", label: "POS Dine-In", icon: ConciergeBell, module: "pos" },
       { to: "/restaurant", label: "Restaurant Mgmt", icon: ConciergeBell, module: "restaurant" },
       { to: "/menu-management", label: "Menu Management", icon: BookOpen, module: "menu_management" },
     ],
@@ -124,6 +125,7 @@ const nav: NavEntry[] = [
     icon: Cog,
     children: [
       { to: "/properties", label: "Properties", icon: Building2, module: "properties" },
+      { to: "/setup", label: "Setup Wizard", icon: Settings, module: "admin" },
       { to: "/users", label: "Users & Roles", icon: ShieldCheck, module: "users" },
       { to: "/admin", label: "System Admin", icon: Settings, module: "admin" },
     ],

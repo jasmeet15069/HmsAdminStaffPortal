@@ -10,12 +10,14 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsersRouteImport } from './routes/users'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as RevenueRouteImport } from './routes/revenue'
 import { Route as RestaurantRouteImport } from './routes/restaurant'
 import { Route as ReservationsRouteImport } from './routes/reservations'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as PropertiesRouteImport } from './routes/properties'
 import { Route as ProcurementRouteImport } from './routes/procurement'
+import { Route as PosDineinRouteImport } from './routes/pos-dinein'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as NightAuditRouteImport } from './routes/night-audit'
 import { Route as MenuManagementRouteImport } from './routes/menu-management'
@@ -38,6 +40,11 @@ import { Route as GuestsIdRouteImport } from './routes/guests.$id'
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
   path: '/users',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RevenueRoute = RevenueRouteImport.update({
@@ -68,6 +75,11 @@ const PropertiesRoute = PropertiesRouteImport.update({
 const ProcurementRoute = ProcurementRouteImport.update({
   id: '/procurement',
   path: '/procurement',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PosDineinRoute = PosDineinRouteImport.update({
+  id: '/pos-dinein',
+  path: '/pos-dinein',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PosRoute = PosRouteImport.update({
@@ -177,12 +189,14 @@ export interface FileRoutesByFullPath {
   '/menu-management': typeof MenuManagementRoute
   '/night-audit': typeof NightAuditRoute
   '/pos': typeof PosRoute
+  '/pos-dinein': typeof PosDineinRoute
   '/procurement': typeof ProcurementRoute
   '/properties': typeof PropertiesRoute
   '/reports': typeof ReportsRoute
   '/reservations': typeof ReservationsRouteWithChildren
   '/restaurant': typeof RestaurantRoute
   '/revenue': typeof RevenueRoute
+  '/setup': typeof SetupRoute
   '/users': typeof UsersRoute
   '/guests/$id': typeof GuestsIdRoute
   '/reservations/$id': typeof ReservationsIdRoute
@@ -204,12 +218,14 @@ export interface FileRoutesByTo {
   '/menu-management': typeof MenuManagementRoute
   '/night-audit': typeof NightAuditRoute
   '/pos': typeof PosRoute
+  '/pos-dinein': typeof PosDineinRoute
   '/procurement': typeof ProcurementRoute
   '/properties': typeof PropertiesRoute
   '/reports': typeof ReportsRoute
   '/reservations': typeof ReservationsRouteWithChildren
   '/restaurant': typeof RestaurantRoute
   '/revenue': typeof RevenueRoute
+  '/setup': typeof SetupRoute
   '/users': typeof UsersRoute
   '/guests/$id': typeof GuestsIdRoute
   '/reservations/$id': typeof ReservationsIdRoute
@@ -232,12 +248,14 @@ export interface FileRoutesById {
   '/menu-management': typeof MenuManagementRoute
   '/night-audit': typeof NightAuditRoute
   '/pos': typeof PosRoute
+  '/pos-dinein': typeof PosDineinRoute
   '/procurement': typeof ProcurementRoute
   '/properties': typeof PropertiesRoute
   '/reports': typeof ReportsRoute
   '/reservations': typeof ReservationsRouteWithChildren
   '/restaurant': typeof RestaurantRoute
   '/revenue': typeof RevenueRoute
+  '/setup': typeof SetupRoute
   '/users': typeof UsersRoute
   '/guests/$id': typeof GuestsIdRoute
   '/reservations/$id': typeof ReservationsIdRoute
@@ -261,12 +279,14 @@ export interface FileRouteTypes {
     | '/menu-management'
     | '/night-audit'
     | '/pos'
+    | '/pos-dinein'
     | '/procurement'
     | '/properties'
     | '/reports'
     | '/reservations'
     | '/restaurant'
     | '/revenue'
+    | '/setup'
     | '/users'
     | '/guests/$id'
     | '/reservations/$id'
@@ -288,12 +308,14 @@ export interface FileRouteTypes {
     | '/menu-management'
     | '/night-audit'
     | '/pos'
+    | '/pos-dinein'
     | '/procurement'
     | '/properties'
     | '/reports'
     | '/reservations'
     | '/restaurant'
     | '/revenue'
+    | '/setup'
     | '/users'
     | '/guests/$id'
     | '/reservations/$id'
@@ -315,12 +337,14 @@ export interface FileRouteTypes {
     | '/menu-management'
     | '/night-audit'
     | '/pos'
+    | '/pos-dinein'
     | '/procurement'
     | '/properties'
     | '/reports'
     | '/reservations'
     | '/restaurant'
     | '/revenue'
+    | '/setup'
     | '/users'
     | '/guests/$id'
     | '/reservations/$id'
@@ -343,12 +367,14 @@ export interface RootRouteChildren {
   MenuManagementRoute: typeof MenuManagementRoute
   NightAuditRoute: typeof NightAuditRoute
   PosRoute: typeof PosRoute
+  PosDineinRoute: typeof PosDineinRoute
   ProcurementRoute: typeof ProcurementRoute
   PropertiesRoute: typeof PropertiesRoute
   ReportsRoute: typeof ReportsRoute
   ReservationsRoute: typeof ReservationsRouteWithChildren
   RestaurantRoute: typeof RestaurantRoute
   RevenueRoute: typeof RevenueRoute
+  SetupRoute: typeof SetupRoute
   UsersRoute: typeof UsersRoute
   GuestsIdRoute: typeof GuestsIdRoute
 }
@@ -360,6 +386,13 @@ declare module '@tanstack/react-router' {
       path: '/users'
       fullPath: '/users'
       preLoaderRoute: typeof UsersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/revenue': {
@@ -402,6 +435,13 @@ declare module '@tanstack/react-router' {
       path: '/procurement'
       fullPath: '/procurement'
       preLoaderRoute: typeof ProcurementRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pos-dinein': {
+      id: '/pos-dinein'
+      path: '/pos-dinein'
+      fullPath: '/pos-dinein'
+      preLoaderRoute: typeof PosDineinRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pos': {
@@ -563,12 +603,14 @@ const rootRouteChildren: RootRouteChildren = {
   MenuManagementRoute: MenuManagementRoute,
   NightAuditRoute: NightAuditRoute,
   PosRoute: PosRoute,
+  PosDineinRoute: PosDineinRoute,
   ProcurementRoute: ProcurementRoute,
   PropertiesRoute: PropertiesRoute,
   ReportsRoute: ReportsRoute,
   ReservationsRoute: ReservationsRouteWithChildren,
   RestaurantRoute: RestaurantRoute,
   RevenueRoute: RevenueRoute,
+  SetupRoute: SetupRoute,
   UsersRoute: UsersRoute,
   GuestsIdRoute: GuestsIdRoute,
 }
