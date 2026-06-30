@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsersRouteImport } from './routes/users'
+import { Route as SuperadminRouteImport } from './routes/superadmin'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as RevenueRouteImport } from './routes/revenue'
 import { Route as RestaurantRouteImport } from './routes/restaurant'
@@ -32,6 +33,7 @@ import { Route as ChannelManagerRouteImport } from './routes/channel-manager'
 import { Route as BookingEngineRouteImport } from './routes/booking-engine'
 import { Route as BillingRouteImport } from './routes/billing'
 import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AccountingRouteImport } from './routes/accounting'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ReservationsNewRouteImport } from './routes/reservations.new'
 import { Route as ReservationsIdRouteImport } from './routes/reservations.$id'
@@ -40,6 +42,11 @@ import { Route as GuestsIdRouteImport } from './routes/guests.$id'
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
   path: '/users',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SuperadminRoute = SuperadminRouteImport.update({
+  id: '/superadmin',
+  path: '/superadmin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SetupRoute = SetupRouteImport.update({
@@ -152,6 +159,11 @@ const AdminRoute = AdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AccountingRoute = AccountingRouteImport.update({
+  id: '/accounting',
+  path: '/accounting',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -175,6 +187,7 @@ const GuestsIdRoute = GuestsIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/accounting': typeof AccountingRoute
   '/admin': typeof AdminRoute
   '/billing': typeof BillingRoute
   '/booking-engine': typeof BookingEngineRoute
@@ -197,6 +210,7 @@ export interface FileRoutesByFullPath {
   '/restaurant': typeof RestaurantRoute
   '/revenue': typeof RevenueRoute
   '/setup': typeof SetupRoute
+  '/superadmin': typeof SuperadminRoute
   '/users': typeof UsersRoute
   '/guests/$id': typeof GuestsIdRoute
   '/reservations/$id': typeof ReservationsIdRoute
@@ -204,6 +218,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/accounting': typeof AccountingRoute
   '/admin': typeof AdminRoute
   '/billing': typeof BillingRoute
   '/booking-engine': typeof BookingEngineRoute
@@ -226,6 +241,7 @@ export interface FileRoutesByTo {
   '/restaurant': typeof RestaurantRoute
   '/revenue': typeof RevenueRoute
   '/setup': typeof SetupRoute
+  '/superadmin': typeof SuperadminRoute
   '/users': typeof UsersRoute
   '/guests/$id': typeof GuestsIdRoute
   '/reservations/$id': typeof ReservationsIdRoute
@@ -234,6 +250,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/accounting': typeof AccountingRoute
   '/admin': typeof AdminRoute
   '/billing': typeof BillingRoute
   '/booking-engine': typeof BookingEngineRoute
@@ -256,6 +273,7 @@ export interface FileRoutesById {
   '/restaurant': typeof RestaurantRoute
   '/revenue': typeof RevenueRoute
   '/setup': typeof SetupRoute
+  '/superadmin': typeof SuperadminRoute
   '/users': typeof UsersRoute
   '/guests/$id': typeof GuestsIdRoute
   '/reservations/$id': typeof ReservationsIdRoute
@@ -265,6 +283,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/accounting'
     | '/admin'
     | '/billing'
     | '/booking-engine'
@@ -287,6 +306,7 @@ export interface FileRouteTypes {
     | '/restaurant'
     | '/revenue'
     | '/setup'
+    | '/superadmin'
     | '/users'
     | '/guests/$id'
     | '/reservations/$id'
@@ -294,6 +314,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/accounting'
     | '/admin'
     | '/billing'
     | '/booking-engine'
@@ -316,6 +337,7 @@ export interface FileRouteTypes {
     | '/restaurant'
     | '/revenue'
     | '/setup'
+    | '/superadmin'
     | '/users'
     | '/guests/$id'
     | '/reservations/$id'
@@ -323,6 +345,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/accounting'
     | '/admin'
     | '/billing'
     | '/booking-engine'
@@ -345,6 +368,7 @@ export interface FileRouteTypes {
     | '/restaurant'
     | '/revenue'
     | '/setup'
+    | '/superadmin'
     | '/users'
     | '/guests/$id'
     | '/reservations/$id'
@@ -353,6 +377,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountingRoute: typeof AccountingRoute
   AdminRoute: typeof AdminRoute
   BillingRoute: typeof BillingRoute
   BookingEngineRoute: typeof BookingEngineRoute
@@ -375,6 +400,7 @@ export interface RootRouteChildren {
   RestaurantRoute: typeof RestaurantRoute
   RevenueRoute: typeof RevenueRoute
   SetupRoute: typeof SetupRoute
+  SuperadminRoute: typeof SuperadminRoute
   UsersRoute: typeof UsersRoute
   GuestsIdRoute: typeof GuestsIdRoute
 }
@@ -386,6 +412,13 @@ declare module '@tanstack/react-router' {
       path: '/users'
       fullPath: '/users'
       preLoaderRoute: typeof UsersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/superadmin': {
+      id: '/superadmin'
+      path: '/superadmin'
+      fullPath: '/superadmin'
+      preLoaderRoute: typeof SuperadminRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup': {
@@ -542,6 +575,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/accounting': {
+      id: '/accounting'
+      path: '/accounting'
+      fullPath: '/accounting'
+      preLoaderRoute: typeof AccountingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -589,6 +629,7 @@ const ReservationsRouteWithChildren = ReservationsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountingRoute: AccountingRoute,
   AdminRoute: AdminRoute,
   BillingRoute: BillingRoute,
   BookingEngineRoute: BookingEngineRoute,
@@ -611,6 +652,7 @@ const rootRouteChildren: RootRouteChildren = {
   RestaurantRoute: RestaurantRoute,
   RevenueRoute: RevenueRoute,
   SetupRoute: SetupRoute,
+  SuperadminRoute: SuperadminRoute,
   UsersRoute: UsersRoute,
   GuestsIdRoute: GuestsIdRoute,
 }

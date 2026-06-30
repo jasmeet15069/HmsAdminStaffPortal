@@ -29,6 +29,7 @@ import {
   Share2,
   Landmark,
   Cog,
+  Calculator,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMHMS } from "@/lib/mhms-store";
@@ -116,6 +117,7 @@ const nav: NavEntry[] = [
     icon: Landmark,
     children: [
       { to: "/billing", label: "Billing & Finance", icon: Receipt, module: "billing" },
+      { to: "/accounting", label: "Accounting", icon: Calculator, module: "accounting" },
       { to: "/night-audit", label: "Night Audit", icon: Moon, module: "night_audit" },
       { to: "/reports", label: "Reports & Analytics", icon: BarChart3, module: "reports" },
     ],
