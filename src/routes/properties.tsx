@@ -9,6 +9,8 @@ import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGri
 import { Building2, MapPin, Phone, Mail, Plus, Star, Bed, Coffee, Waves } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useAuth } from "@/lib/api/auth";
+import { useProperties } from "@/lib/api/hooks";
 
 const PROPERTY_DETAILS = [
   {
@@ -43,7 +45,13 @@ export const Route = createFileRoute("/properties")({
 });
 
 function Properties() {
-  const { properties, setProperty, rooms } = useMHMS();
+  const authed = !!useAuth((s) => s.user);
+  const propertiesQ = useProperties();
+  const { properties: demoProperties, setProperty, rooms } = useMHMS();
+
+  const liveCount = authed && propertiesQ.data ? (propertiesQ.data as unknown[]).length : null;
+  const properties = demoProperties;
+
   const [selectedProperty, setSelectedProperty] = useState(properties[0]?.id ?? null);
 
   const selectedP = properties.find((p) => p.id === selectedProperty);
@@ -87,7 +95,7 @@ function Properties() {
       />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-        <Stat label="Properties" value={properties.length} hint="In portfolio" />
+        <Stat label="Properties" value={liveCount ?? properties.length} hint={liveCount !== null ? "Live · in portfolio" : "Demo portfolio"} />
         <Stat label="Total Rooms" value={totalRooms} hint="Across all properties" />
         <Stat label="Portfolio Occupancy" value={`${avgOcc}%`} tone="info" hint="Average across properties" />
         <Stat label="Portfolio ADR" value={fmtINR(avgAdr)} tone="success" hint="Average daily rate" />

@@ -7,6 +7,7 @@ import {
   useNightAuditChecklist,
   useNightAuditReports,
   useCloseDay,
+  useNightAuditTax,
 } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ function NightAudit() {
   const checklistQ = useNightAuditChecklist();
   const reportsQ = useNightAuditReports();
   const closeDay = useCloseDay();
+  const taxQ = useNightAuditTax();
 
   const r = reportQ.data;
   const checklist = useMemo(() => checklistQ.data ?? [], [checklistQ.data]);
@@ -146,6 +148,7 @@ function NightAudit() {
               <Badge variant="outline" className="ml-1.5 text-[10px]">{pastReports.length}</Badge>
             )}
           </TabsTrigger>
+          <TabsTrigger value="tax">GST / Tax Audit</TabsTrigger>
         </TabsList>
 
         {/* Checklist */}
@@ -299,6 +302,62 @@ function NightAudit() {
                 </tbody>
               </table>
             </div>
+          </Card>
+        </TabsContent>
+        {/* Tax Audit */}
+        <TabsContent value="tax">
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold">GST / Tax Audit — Tonight</h3>
+              {taxQ.isLoading && <span className="text-xs text-muted-foreground">Loading…</span>}
+            </div>
+            {taxQ.data && taxQ.data.length > 0 ? (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        {["Category", "Base Amount", "Tax Rate", "Tax Amount"].map((h) => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {taxQ.data.map((t, i) => (
+                        <tr key={i} className="border-b last:border-0 hover:bg-accent/5">
+                          <td className="px-4 py-3 font-medium">{t.category}</td>
+                          <td className="px-4 py-3">{fmtINR(t.base_amount)}</td>
+                          <td className="px-4 py-3">{(t.tax_rate * 100).toFixed(0)}%</td>
+                          <td className="px-4 py-3 text-success font-medium">{fmtINR(t.tax_amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t font-semibold">
+                        <td className="px-4 py-3">Total</td>
+                        <td className="px-4 py-3">{fmtINR(taxQ.data.reduce((s, t) => s + t.base_amount, 0))}</td>
+                        <td className="px-4 py-3" />
+                        <td className="px-4 py-3 text-success">{fmtINR(taxQ.data.reduce((s, t) => s + t.tax_amount, 0))}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                <Button size="sm" variant="outline" className="mt-4 gap-1.5" onClick={() => {
+                  downloadCSV("gst-audit.csv", taxQ.data!.map((t) => ({
+                    category: t.category,
+                    base_amount: t.base_amount,
+                    tax_rate: (t.tax_rate * 100).toFixed(0) + "%",
+                    tax_amount: t.tax_amount,
+                  })));
+                }}>
+                  <Download className="size-3.5" /> Export GST Report
+                </Button>
+              </>
+            ) : (
+              <p className="text-muted-foreground text-sm py-8 text-center">
+                {taxQ.isLoading ? "Loading tax data…" : "No tax audit data available. Complete night audit checklist first."}
+              </p>
+            )}
           </Card>
         </TabsContent>
       </Tabs>

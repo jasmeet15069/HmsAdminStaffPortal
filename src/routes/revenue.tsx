@@ -1,17 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
+import { useAuth } from "@/lib/api/auth";
+import { usePricingRules, useCreatePricingRule, useUpdatePricingRule, useDeletePricingRule, useCompetitorRates, useRevenueForecast } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, Legend, AreaChart, Area } from "recharts";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
-import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Plus, Loader2 } from "lucide-react";
 
 const DEMAND_CALENDAR = Array.from({ length: 30 }, (_, i) => {
   const date = new Date(2026, 5, 18 + i);
@@ -31,9 +35,20 @@ export const Route = createFileRoute("/revenue")({
 });
 
 function Revenue() {
+  const authed = !!useAuth((s) => s.user);
+  const pricingRulesQ = usePricingRules();
+  const createRuleM = useCreatePricingRule();
+  const updateRuleM = useUpdatePricingRule();
+  const deleteRuleM = useDeletePricingRule();
+  const competitorRatesQ = useCompetitorRates();
+  const forecastQ = useRevenueForecast();
+  const isLive = authed;
+
   const { rooms } = useMHMS();
   const [adjust, setAdjust] = useState([0]);
   const [dynamicPricing, setDynamicPricing] = useState(true);
+  const [newRuleOpen, setNewRuleOpen] = useState(false);
+  const [newRule, setNewRule] = useState({ name: "", rule_type: "occupancy", adjustment: "10" });
 
   const forecast = useMemo(() => Array.from({ length: 14 }, (_, i) => ({
     day: `Jun ${18 + i}`,
@@ -154,23 +169,43 @@ function Revenue() {
               </Button>
             </Card>
             <Card className="p-5 space-y-4">
-              <h3 className="font-semibold">Dynamic Pricing Rules</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Dynamic Pricing Rules</h3>
+                {isLive && (
+                  <Button size="sm" variant="outline" onClick={() => setNewRuleOpen(true)}>
+                    <Plus className="size-3.5 mr-1" />Add Rule
+                  </Button>
+                )}
+              </div>
+              {isLive && pricingRulesQ.isLoading && <div className="flex justify-center py-4"><Loader2 className="size-4 animate-spin text-muted-foreground" /></div>}
               <div className="space-y-3">
-                {[
-                  { rule: "Occupancy > 85%", action: "Increase rates by 15%", active: true },
-                  { rule: "Occupancy < 40%", action: "Decrease rates by 10%", active: true },
-                  { rule: "Advance booking < 3 days", action: "Increase rates by 20%", active: dynamicPricing },
-                  { rule: "Long weekend (3+ days)", action: "Increase rates by 25%", active: true },
-                  { rule: "Local events detected", action: "Surge pricing +30%", active: dynamicPricing },
-                ].map((r) => (
-                  <div key={r.rule} className="flex items-start justify-between border rounded p-3 gap-3">
-                    <div className="min-w-0">
-                      <div className="font-medium text-sm">{r.rule}</div>
-                      <div className="text-xs text-muted-foreground">{r.action}</div>
-                    </div>
-                    <Switch defaultChecked={r.active} onCheckedChange={() => toast.info("Rule updated")} />
-                  </div>
-                ))}
+                {isLive && pricingRulesQ.data && pricingRulesQ.data.length > 0
+                  ? pricingRulesQ.data.map((r) => (
+                      <div key={r.id} className="flex items-start justify-between border rounded p-3 gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm">{r.name}</div>
+                          <div className="text-xs text-muted-foreground">{r.rule_type} · {r.adjustment >= 0 ? "+" : ""}{r.adjustment}%</div>
+                        </div>
+                        <Switch checked={r.active}
+                          onCheckedChange={(checked) => updateRuleM.mutate({ id: r.id, patch: { active: checked } }, { onSuccess: () => toast.success(`Rule ${checked ? "enabled" : "disabled"}`) })} />
+                      </div>
+                    ))
+                  : [
+                      { rule: "Occupancy > 85%", action: "Increase rates by 15%", active: true },
+                      { rule: "Occupancy < 40%", action: "Decrease rates by 10%", active: true },
+                      { rule: "Advance booking < 3 days", action: "Increase rates by 20%", active: dynamicPricing },
+                      { rule: "Long weekend (3+ days)", action: "Increase rates by 25%", active: true },
+                      { rule: "Local events detected", action: "Surge pricing +30%", active: dynamicPricing },
+                    ].map((r) => (
+                      <div key={r.rule} className="flex items-start justify-between border rounded p-3 gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm">{r.rule}</div>
+                          <div className="text-xs text-muted-foreground">{r.action}</div>
+                        </div>
+                        <Switch defaultChecked={r.active} onCheckedChange={() => toast.info("Rule updated")} />
+                      </div>
+                    ))
+                }
               </div>
             </Card>
           </div>
@@ -199,48 +234,69 @@ function Revenue() {
 
         {/* Comp Set */}
         <TabsContent value="comp">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card className="p-5">
-              <h3 className="font-semibold mb-4">Competitive Set — Tonight's Rates</h3>
-              <div className="space-y-3">
-                {competitors.map((c) => {
-                  const isUs = c.name.startsWith("You");
-                  const Icon = c.diff > 0 ? TrendingUp : c.diff < 0 ? TrendingDown : Minus;
-                  return (
-                    <div key={c.name} className={`flex items-center justify-between p-3 rounded border ${isUs ? "border-primary/50 bg-primary/5" : ""}`}>
-                      <div>
-                        <div className={`font-medium text-sm ${isUs ? "text-primary" : ""}`}>{c.name}</div>
-                        <div className="text-xs text-muted-foreground">Occupancy: {c.occ}%</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-semibold">{fmtINR(c.rate)}</div>
-                        {!isUs && (
-                          <div className={`text-xs flex items-center gap-0.5 ${c.diff > 0 ? "text-destructive" : c.diff < 0 ? "text-success" : "text-muted-foreground"}`}>
-                            <Icon className="size-3" />
-                            {c.diff > 0 ? `+${fmtINR(c.diff)} vs us` : `${fmtINR(Math.abs(c.diff))} below us`}
+          {(() => {
+            const liveComps = isLive && competitorRatesQ.data && competitorRatesQ.data.length > 0
+              ? competitorRatesQ.data.map((c) => ({
+                  name: c.competitor_name,
+                  rate: c.their_rate,
+                  ourRate: c.our_rate,
+                  diff: c.their_rate - c.our_rate,
+                  occ: null,
+                }))
+              : competitors;
+            const chartData = liveComps.map((c) => ({ name: (c.name ?? "").split(" ")[0], rate: c.rate }));
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <Card className="p-5">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-semibold">Competitive Set — Tonight's Rates</h3>
+                    {isLive && <Badge variant="default" className="text-[10px]">Live</Badge>}
+                  </div>
+                  <div className="space-y-3">
+                    {liveComps.map((c: any) => {
+                      const isUs = c.name?.startsWith("You");
+                      const Icon = c.diff > 0 ? TrendingUp : c.diff < 0 ? TrendingDown : Minus;
+                      return (
+                        <div key={c.name} className={`flex items-center justify-between p-3 rounded border ${isUs ? "border-primary/50 bg-primary/5" : ""}`}>
+                          <div>
+                            <div className={`font-medium text-sm ${isUs ? "text-primary" : ""}`}>{c.name}</div>
+                            {c.occ !== null && <div className="text-xs text-muted-foreground">Occupancy: {c.occ}%</div>}
+                            {isLive && c.room_type && <div className="text-xs text-muted-foreground">{c.room_type}</div>}
                           </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                          <div className="text-right">
+                            <div className="font-semibold">{fmtINR(c.rate)}</div>
+                            {!isUs && (
+                              <div className={`text-xs flex items-center gap-0.5 ${c.diff > 0 ? "text-destructive" : c.diff < 0 ? "text-success" : "text-muted-foreground"}`}>
+                                <Icon className="size-3" />
+                                {c.diff > 0 ? `+${fmtINR(Math.abs(c.diff))} above us` : `${fmtINR(Math.abs(c.diff))} below us`}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {isLive && competitorRatesQ.data?.length === 0 && (
+                      <p className="text-center py-4 text-muted-foreground text-sm">No competitor rates entered yet.</p>
+                    )}
+                  </div>
+                </Card>
+                <Card className="p-5">
+                  <h3 className="font-semibold mb-4">Rate Comparison Chart</h3>
+                  <div className="h-64">
+                    <ResponsiveContainer>
+                      <BarChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                        <XAxis dataKey="name" fontSize={11} />
+                        <YAxis fontSize={11} />
+                        <Tooltip />
+                        <Bar dataKey="rate" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} name="Rate ₹" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
               </div>
-            </Card>
-            <Card className="p-5">
-              <h3 className="font-semibold mb-4">Rate Comparison Chart</h3>
-              <div className="h-64">
-                <ResponsiveContainer>
-                  <BarChart data={competitors.map((c) => ({ name: c.name.split(" ")[0], rate: c.rate }))}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis dataKey="name" fontSize={11} />
-                    <YAxis fontSize={11} />
-                    <Tooltip />
-                    <Bar dataKey="rate" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} name="Rate ₹" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-          </div>
+            );
+          })()}
         </TabsContent>
 
         {/* Pace Analysis */}
@@ -264,6 +320,40 @@ function Revenue() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Add Pricing Rule Dialog */}
+      <Dialog open={newRuleOpen} onOpenChange={setNewRuleOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Add Pricing Rule</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label className="text-xs">Rule Name</Label><Input className="h-8 mt-1" placeholder="e.g. High Occupancy Surge" value={newRule.name} onChange={(e) => setNewRule({ ...newRule, name: e.target.value })} /></div>
+            <div>
+              <Label className="text-xs">Type</Label>
+              <select className="mt-1 h-8 w-full border rounded px-2 text-sm bg-background" value={newRule.rule_type} onChange={(e) => setNewRule({ ...newRule, rule_type: e.target.value })}>
+                {["occupancy", "advance_booking", "day_of_week", "event", "season"].map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div><Label className="text-xs">Adjustment %</Label><Input type="number" className="h-8 mt-1" placeholder="+15 or -10" value={newRule.adjustment} onChange={(e) => setNewRule({ ...newRule, adjustment: e.target.value })} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewRuleOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!newRule.name || createRuleM.isPending}
+              onClick={() => {
+                createRuleM.mutate(
+                  { name: newRule.name, rule_type: newRule.rule_type, adjustment: Number(newRule.adjustment), conditions: {}, priority: 1, active: true },
+                  {
+                    onSuccess: () => { toast.success("Rule created"); setNewRuleOpen(false); setNewRule({ name: "", rule_type: "occupancy", adjustment: "10" }); },
+                    onError: (e: any) => toast.error(e.message ?? "Failed to create rule"),
+                  }
+                );
+              }}
+            >
+              {createRuleM.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

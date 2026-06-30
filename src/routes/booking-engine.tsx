@@ -10,9 +10,13 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
-import { Calendar, TrendingUp, Globe2, Plus, Tag, CheckCircle2, Edit2, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Calendar, TrendingUp, Globe2, Plus, Tag, CheckCircle2, Edit2, Trash2, Loader2 } from "lucide-react";
+import { useState, useMemo } from "react";
 import { toast } from "sonner";
+import { useAuth } from "@/lib/api/auth";
+import { usePromotions, useCreatePromotion, useUpdatePromotion, useDeletePromotion, useBookingAvailability } from "@/lib/api/hooks";
+import type { Promotion } from "@/lib/api/types";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 const INITIAL_RATE_PLANS = [
   { id: "rp1", name: "Best Available Rate", code: "BAR", type: "Public", discount: 0, active: true, bookings: 62 },
@@ -57,13 +61,77 @@ export const Route = createFileRoute("/booking-engine")({
 });
 
 function BookingEngine() {
+  const authed = !!useAuth((s) => s.user);
   const { rooms } = useMHMS();
+  const promotionsQ = usePromotions();
+  const createPromoM = useCreatePromotion();
+  const updatePromoM = useUpdatePromotion();
+  const deletePromoM = useDeletePromotion();
+
   const [widgetColor, setWidgetColor] = useState("#1a56db");
   const [promoEnabled, setPromoEnabled] = useState(true);
   const [showBestRate, setShowBestRate] = useState(true);
   const [ratePlans, setRatePlans] = useState(INITIAL_RATE_PLANS);
   const [promoCodes, setPromoCodes] = useState(INITIAL_PROMO_CODES);
   const [searchDate, setSearchDate] = useState({ in: new Date().toISOString().slice(0, 10), out: new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10) });
+  const [newPromoOpen, setNewPromoOpen] = useState(false);
+  const [newPromo, setNewPromo] = useState({ code: "", discount_type: "percentage", discount_value: "", max_uses: "", valid_until: "" });
+
+  const isLive = authed && !!promotionsQ.data;
+
+  const displayPromoCodes = useMemo(() => {
+    if (isLive && promotionsQ.data) {
+      return promotionsQ.data.map((p: any) => ({
+        id: p.id,
+        code: p.code,
+        discount: p.discount_value ?? p.discount,
+        type: p.discount_type === "flat" ? "Flat (₹)" : "Percentage",
+        uses: p.usage_count ?? 0,
+        limit: p.max_uses ?? 999,
+        expiry: p.valid_until ? p.valid_until.slice(0, 10) : "—",
+        active: p.is_active ?? true,
+        _live: true,
+      }));
+    }
+    return promoCodes;
+  }, [isLive, promotionsQ.data, promoCodes]);
+
+  const handleCreatePromo = () => {
+    if (!newPromo.code) return;
+    createPromoM.mutate({
+      code: newPromo.code,
+      discount_type: newPromo.discount_type,
+      discount_value: parseFloat(newPromo.discount_value) || 0,
+      usage_limit: parseInt(newPromo.max_uses) || 0,
+      valid_to: newPromo.valid_until || new Date(Date.now() + 365 * 86400000).toISOString(),
+      valid_from: new Date().toISOString(),
+      active: true,
+      name: newPromo.code,
+      description: null,
+      min_nights: 0,
+      min_amount: 0,
+      max_discount: null,
+    } as Omit<Promotion, "id" | "hotel_id" | "used_count" | "created_at">, {
+      onSuccess: () => { setNewPromoOpen(false); setNewPromo({ code: "", discount_type: "percentage", discount_value: "", max_uses: "", valid_until: "" }); toast.success("Promo code created"); },
+      onError: () => toast.error("Failed to create promo"),
+    });
+  };
+
+  const togglePromo = (p: typeof displayPromoCodes[0]) => {
+    if ((p as any)._live) {
+      updatePromoM.mutate({ id: p.id, patch: { active: !p.active } }, { onError: () => toast.error("Failed to update") });
+    } else {
+      setPromoCodes(promoCodes.map((c) => c.id === p.id ? { ...c, active: !c.active } : c));
+    }
+  };
+
+  const deletePromo = (p: typeof displayPromoCodes[0]) => {
+    if ((p as any)._live) {
+      deletePromoM.mutate(p.id, { onError: () => toast.error("Failed to delete") });
+    } else {
+      setPromoCodes(promoCodes.filter((c) => c.id !== p.id));
+    }
+  };
 
   const activeRooms = rooms.filter((r) => r.status !== "maintenance");
   const convRate = ((FUNNEL_DATA[5].value / FUNNEL_DATA[0].value) * 100).toFixed(1);
@@ -218,8 +286,8 @@ function BookingEngine() {
         {/* Promo Codes */}
         <TabsContent value="promo">
           <div className="flex justify-between items-center mb-3">
-            <p className="text-sm text-muted-foreground">{promoCodes.filter((p) => p.active).length} active promo codes</p>
-            <Button size="sm" className="gap-1.5" onClick={() => toast.success("Promo code created")}>
+            <p className="text-sm text-muted-foreground">{displayPromoCodes.filter((p) => p.active).length} active promo codes{isLive ? " · Live" : " · Demo"}</p>
+            <Button size="sm" className="gap-1.5" onClick={() => isLive ? setNewPromoOpen(true) : toast.success("Promo code created")}>
               <Plus className="size-4" /> New Code
             </Button>
           </div>
@@ -234,7 +302,7 @@ function BookingEngine() {
                   </tr>
                 </thead>
                 <tbody>
-                  {promoCodes.map((p) => (
+                  {displayPromoCodes.map((p) => (
                     <tr key={p.id} className="border-b last:border-0 hover:bg-accent/5">
                       <td className="px-4 py-3 font-mono font-semibold text-sm">{p.code}</td>
                       <td className="px-4 py-3 font-medium text-success">
@@ -243,15 +311,18 @@ function BookingEngine() {
                       <td className="px-4 py-3">
                         <div className="text-xs mb-1">{p.uses} / {p.limit}</div>
                         <div className="w-20 h-1 bg-muted rounded">
-                          <div className="h-1 bg-primary rounded" style={{ width: `${(p.uses / p.limit) * 100}%` }} />
+                          <div className="h-1 bg-primary rounded" style={{ width: `${Math.min(100, (p.uses / p.limit) * 100)}%` }} />
                         </div>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground text-xs">{p.expiry}</td>
                       <td className="px-4 py-3">
-                        <Switch checked={p.active} onCheckedChange={(v) => setPromoCodes(promoCodes.map((c) => c.id === p.id ? { ...c, active: v } : c))} />
+                        <Switch checked={p.active} onCheckedChange={() => togglePromo(p)} />
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 flex gap-1">
                         <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => { navigator.clipboard?.writeText(p.code); toast.success(`Code ${p.code} copied`); }}>Copy</Button>
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-destructive hover:text-destructive" onClick={() => deletePromo(p)}>
+                          <Trash2 className="size-3.5" />
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -353,6 +424,49 @@ function BookingEngine() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* New Promo Dialog */}
+      <Dialog open={newPromoOpen} onOpenChange={setNewPromoOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>New Promo Code</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">Code</Label>
+              <Input className="mt-1 font-mono uppercase" placeholder="SUMMER25" value={newPromo.code} onChange={(e) => setNewPromo((p) => ({ ...p, code: e.target.value.toUpperCase() }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Discount Type</Label>
+              <Select value={newPromo.discount_type} onValueChange={(v) => setNewPromo((p) => ({ ...p, discount_type: v }))}>
+                <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="percentage">Percentage %</SelectItem>
+                  <SelectItem value="flat">Flat Amount ₹</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Discount Value</Label>
+              <Input className="mt-1" type="number" placeholder={newPromo.discount_type === "percentage" ? "e.g. 25" : "e.g. 500"} value={newPromo.discount_value} onChange={(e) => setNewPromo((p) => ({ ...p, discount_value: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Max Uses</Label>
+                <Input className="mt-1" type="number" placeholder="Unlimited" value={newPromo.max_uses} onChange={(e) => setNewPromo((p) => ({ ...p, max_uses: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Valid Until</Label>
+                <Input className="mt-1" type="date" value={newPromo.valid_until} onChange={(e) => setNewPromo((p) => ({ ...p, valid_until: e.target.value }))} />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setNewPromoOpen(false)}>Cancel</Button>
+            <Button size="sm" disabled={createPromoM.isPending || !newPromo.code} onClick={handleCreatePromo}>
+              {createPromoM.isPending && <Loader2 className="size-3.5 mr-1.5 animate-spin" />} Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

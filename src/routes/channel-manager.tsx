@@ -6,10 +6,15 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import { Globe2, RefreshCw, AlertTriangle, CheckCircle2, Clock, TrendingUp, Settings } from "lucide-react";
-import { useState } from "react";
+import { Globe2, RefreshCw, AlertTriangle, CheckCircle2, Clock, TrendingUp, Settings, Plus, Loader2 } from "lucide-react";
+import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { fmtINR } from "@/lib/mhms-store";
+import { useAuth } from "@/lib/api/auth";
+import { useChannelConnections, useCreateChannelConnection, useUpdateChannelConnection, useDeleteChannelConnection, useChannelAnalytics } from "@/lib/api/hooks";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const INITIAL_CHANNELS = [
   { id: "ch1", name: "MakeMyTrip", logo: "MMT", connected: true, roomsMapped: 42, bookings30d: 38, revenue30d: 284000, lastSync: "2 min ago", parity: "OK", commission: 15 },
@@ -34,8 +39,38 @@ export const Route = createFileRoute("/channel-manager")({
 });
 
 function ChannelManager() {
-  const [channels, setChannels] = useState(INITIAL_CHANNELS);
+  const authed = !!useAuth((s) => s.user);
+  const connectionsQ = useChannelConnections();
+  const analyticsQ = useChannelAnalytics();
+  const createConnM = useCreateChannelConnection();
+  const updateConnM = useUpdateChannelConnection();
+  const deleteConnM = useDeleteChannelConnection();
+
+  const [demoChannels, setDemoChannels] = useState(INITIAL_CHANNELS);
   const [syncing, setSyncing] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [newConn, setNewConn] = useState({ channel_name: "", api_key: "", commission: "" });
+
+  const isLive = authed && !!connectionsQ.data;
+
+  const channels = useMemo(() => {
+    if (isLive && connectionsQ.data) {
+      return connectionsQ.data.map((c: any) => ({
+        id: c.id,
+        name: c.channel_name,
+        logo: (c.channel_name ?? "").slice(0, 2).toUpperCase(),
+        connected: c.is_active ?? true,
+        roomsMapped: c.rooms_mapped ?? 0,
+        bookings30d: c.bookings_30d ?? 0,
+        revenue30d: c.revenue_30d ?? 0,
+        lastSync: c.last_sync ? new Date(c.last_sync).toLocaleString() : "Never",
+        parity: c.parity_status ?? "OK",
+        commission: c.commission_rate ?? 0,
+        _live: true,
+      }));
+    }
+    return demoChannels;
+  }, [isLive, connectionsQ.data, demoChannels]);
 
   const connected = channels.filter((c) => c.connected).length;
   const totalBookings = channels.reduce((s, c) => s + c.bookings30d, 0);
@@ -50,16 +85,44 @@ function ChannelManager() {
       revenue: Math.round(c.revenue30d / 1000),
     }));
 
-  const toggleChannel = (id: string) =>
-    setChannels((prev) => prev.map((c) => c.id === id ? { ...c, connected: !c.connected } : c));
+  const toggleChannel = (ch: typeof channels[0]) => {
+    if ((ch as any)._live) {
+      updateConnM.mutate({ id: ch.id, patch: { connected: !ch.connected } as any }, {
+        onSuccess: () => connectionsQ.refetch(),
+        onError: () => toast.error("Failed to update channel"),
+      });
+    } else {
+      setDemoChannels((prev) => prev.map((c) => c.id === ch.id ? { ...c, connected: !c.connected } : c));
+    }
+  };
 
   const syncChannel = (id: string, name: string) => {
     setSyncing(id);
-    setTimeout(() => {
-      setChannels((prev) => prev.map((c) => c.id === id ? { ...c, lastSync: "just now" } : c));
-      setSyncing(null);
-      toast.success(`${name} synced successfully`);
-    }, 1500);
+    if ((channels.find((c) => c.id === id) as any)?._live) {
+      updateConnM.mutate({ id, patch: { last_sync_at: new Date().toISOString() } as any }, {
+        onSettled: () => { setSyncing(null); connectionsQ.refetch(); toast.success(`${name} synced successfully`); },
+      });
+    } else {
+      setTimeout(() => {
+        setDemoChannels((prev) => prev.map((c) => c.id === id ? { ...c, lastSync: "just now" } : c));
+        setSyncing(null);
+        toast.success(`${name} synced successfully`);
+      }, 1500);
+    }
+  };
+
+  const handleAddConn = () => {
+    if (!newConn.channel_name) return;
+    createConnM.mutate({
+      channel_name: newConn.channel_name,
+      api_key: newConn.api_key,
+      channel_type: "ota",
+      settings: { commission_rate: parseFloat(newConn.commission) || 0 },
+      connected: true,
+    }, {
+      onSuccess: () => { setAddOpen(false); setNewConn({ channel_name: "", api_key: "", commission: "" }); connectionsQ.refetch(); toast.success("Channel connected"); },
+      onError: () => toast.error("Failed to add channel"),
+    });
   };
 
   return (
@@ -68,9 +131,16 @@ function ChannelManager() {
         title="Channel Manager"
         description="Manage OTA connections, rates, and inventory distribution"
         actions={
-          <Button size="sm" className="gap-1.5" onClick={() => { channels.filter((c) => c.connected).forEach((c) => syncChannel(c.id, c.name)); toast.success("Syncing all channels…"); }}>
-            <RefreshCw className="size-4" /> Sync All
-          </Button>
+          <div className="flex gap-2">
+            {isLive && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setAddOpen(true)}>
+                <Plus className="size-4" /> Add Channel
+              </Button>
+            )}
+            <Button size="sm" className="gap-1.5" onClick={() => { channels.filter((c) => c.connected).forEach((c) => syncChannel(c.id, c.name)); toast.success("Syncing all channels…"); }}>
+              <RefreshCw className="size-4" /> Sync All
+            </Button>
+          </div>
         }
       />
 
@@ -104,7 +174,7 @@ function ChannelManager() {
                       <div className="text-xs text-muted-foreground">Commission: {ch.commission}%</div>
                     </div>
                   </div>
-                  <Switch checked={ch.connected} onCheckedChange={() => toggleChannel(ch.id)} />
+                  <Switch checked={ch.connected} onCheckedChange={() => toggleChannel(ch)} />
                 </div>
 
                 {ch.connected && (
@@ -258,6 +328,33 @@ function ChannelManager() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Add Channel Dialog */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Connect Channel</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">Channel Name</Label>
+              <Input className="mt-1" placeholder="e.g. MakeMyTrip, Booking.com" value={newConn.channel_name} onChange={(e) => setNewConn((p) => ({ ...p, channel_name: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">API Key / Credentials</Label>
+              <Input className="mt-1" placeholder="API key or auth token" value={newConn.api_key} onChange={(e) => setNewConn((p) => ({ ...p, api_key: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Commission %</Label>
+              <Input className="mt-1" type="number" placeholder="e.g. 15" value={newConn.commission} onChange={(e) => setNewConn((p) => ({ ...p, commission: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button size="sm" disabled={createConnM.isPending} onClick={handleAddConn}>
+              {createConnM.isPending && <Loader2 className="size-3.5 mr-1.5 animate-spin" />} Connect
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

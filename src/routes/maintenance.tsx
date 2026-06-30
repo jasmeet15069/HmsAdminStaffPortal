@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS } from "@/lib/mhms-store";
+import { useAuth } from "@/lib/api/auth";
+import { useAssets, useCreateAsset, useMaintenanceSchedule, useCreateMaintenanceTask, useCompleteMaintenanceTask } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,9 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Wrench, Plus, AlertTriangle, Clock, CheckCircle2, XCircle, Search, Package, Calendar, User } from "lucide-react";
+import { Wrench, Plus, Clock, CheckCircle2, XCircle, Search, Package, Calendar, User, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -45,12 +47,22 @@ export const Route = createFileRoute("/maintenance")({
 });
 
 function Maintenance() {
+  const authed = !!useAuth((s) => s.user);
+  const assetsQ = useAssets();
+  const createAssetM = useCreateAsset();
+  const scheduleQ = useMaintenanceSchedule();
+  const createTaskM = useCreateMaintenanceTask();
+  const completeTaskM = useCompleteMaintenanceTask();
+  const isLive = authed;
+
   const { maintenance, rooms, addTicket, updateTicket } = useMHMS();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [newOpen, setNewOpen] = useState(false);
+  const [newAssetOpen, setNewAssetOpen] = useState(false);
   const [detailTicket, setDetailTicket] = useState<typeof maintenance[number] | null>(null);
   const [form, setForm] = useState({ title: "", description: "", priority: "Normal", roomId: "", assignedTo: "" });
+  const [newAsset, setNewAsset] = useState({ name: "", category: "", location: "", serial_number: "" });
 
   const filtered = maintenance.filter((m) => {
     const room = rooms.find((r) => r.id === m.roomId);
@@ -182,37 +194,64 @@ function Maintenance() {
 
         {/* Asset Register */}
         <TabsContent value="assets">
+          <div className="flex justify-between items-center mb-3">
+            <Badge variant={isLive ? "default" : "outline"} className="text-[10px]">{isLive ? "Live" : "Demo"}</Badge>
+            {isLive && <Button size="sm" variant="outline" onClick={() => setNewAssetOpen(true)}><Plus className="size-3.5 mr-1" />Add Asset</Button>}
+          </div>
           <Card>
+            {isLive && assetsQ.isLoading && <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    {["Asset", "Type", "Location", "Last Service", "Next Service", "Status", "Action"].map((h) => (
+                    {["Asset", "Category", "Location", "Serial", "Status", "Warranty", "Action"].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {ASSETS.map((a) => (
-                    <tr key={a.id} className="border-b last:border-0 hover:bg-accent/5">
-                      <td className="px-4 py-3 font-medium">{a.name}</td>
-                      <td className="px-4 py-3"><Badge variant="outline" className="text-xs">{a.type}</Badge></td>
-                      <td className="px-4 py-3 text-muted-foreground text-xs">{a.location}</td>
-                      <td className="px-4 py-3 text-muted-foreground text-xs">{a.lastService}</td>
-                      <td className="px-4 py-3 text-xs font-medium">{a.nextService}</td>
-                      <td className="px-4 py-3">
-                        <Badge className={`text-[10px] ${a.status === "OK" ? "bg-success/15 text-success border-success/30" : a.status === "Due Soon" ? "bg-warning/15 text-warning-foreground border-warning/30" : "bg-destructive/15 text-destructive border-destructive/30"}`}>
-                          {a.status}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
-                          onClick={() => toast.success(`Work order created for ${a.name}`)}>
-                          Schedule
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
+                  {isLive && assetsQ.data
+                    ? assetsQ.data.map((a) => (
+                        <tr key={a.id} className="border-b last:border-0 hover:bg-accent/5">
+                          <td className="px-4 py-3 font-medium">{a.name}</td>
+                          <td className="px-4 py-3"><Badge variant="outline" className="text-xs">{a.category ?? "—"}</Badge></td>
+                          <td className="px-4 py-3 text-muted-foreground text-xs">{a.location ?? "—"}</td>
+                          <td className="px-4 py-3 font-mono text-xs">{a.serial_number ?? "—"}</td>
+                          <td className="px-4 py-3">
+                            <Badge className={`text-[10px] ${a.status === "active" ? "bg-success/15 text-success border-success/30" : a.status === "maintenance" ? "bg-warning/15 text-warning-foreground border-warning/30" : "bg-muted text-muted-foreground"}`}>
+                              {a.status}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3 text-xs">{a.warranty_until?.slice(0, 10) ?? "—"}</td>
+                          <td className="px-4 py-3">
+                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+                              onClick={() => { createTaskM.mutate({ asset_id: a.id, task_name: `Service: ${a.name}`, frequency: "quarterly", next_due: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10) }, { onSuccess: () => toast.success("Schedule item created") }); }}>
+                              Schedule
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    : ASSETS.map((a) => (
+                        <tr key={a.id} className="border-b last:border-0 hover:bg-accent/5">
+                          <td className="px-4 py-3 font-medium">{a.name}</td>
+                          <td className="px-4 py-3"><Badge variant="outline" className="text-xs">{a.type}</Badge></td>
+                          <td className="px-4 py-3 text-muted-foreground text-xs">{a.location}</td>
+                          <td className="px-4 py-3 text-muted-foreground text-xs">{a.lastService}</td>
+                          <td className="px-4 py-3 text-xs font-medium">{a.nextService}</td>
+                          <td className="px-4 py-3">
+                            <Badge className={`text-[10px] ${a.status === "OK" ? "bg-success/15 text-success border-success/30" : a.status === "Due Soon" ? "bg-warning/15 text-warning-foreground border-warning/30" : "bg-destructive/15 text-destructive border-destructive/30"}`}>
+                              {a.status}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-3">
+                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => toast.success(`Work order created for ${a.name}`)}>Schedule</Button>
+                          </td>
+                        </tr>
+                      ))
+                  }
+                  {isLive && assetsQ.data?.length === 0 && (
+                    <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">No assets registered yet.</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -221,27 +260,58 @@ function Maintenance() {
 
         {/* PM Schedule */}
         <TabsContent value="schedule">
+          {isLive && scheduleQ.isLoading && <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {ASSETS.filter((a) => a.status !== "OK").map((a) => (
-              <Card key={a.id} className="p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <div className="font-medium text-sm">{a.name}</div>
-                    <div className="text-xs text-muted-foreground">{a.type} · {a.location}</div>
-                  </div>
-                  <Badge className={`text-[10px] ${a.status === "Overdue" ? "bg-destructive/15 text-destructive" : "bg-warning/15 text-warning-foreground"}`}>
-                    {a.status}
-                  </Badge>
-                </div>
-                <div className="text-xs text-muted-foreground mb-3">
-                  Next service: <span className="font-medium text-foreground">{a.nextService}</span>
-                </div>
-                <Button size="sm" className="w-full h-7" onClick={() => toast.success(`PM scheduled for ${a.name}`)}>
-                  Schedule PM Now
-                </Button>
-              </Card>
-            ))}
-            {ASSETS.filter((a) => a.status !== "OK").length === 0 && (
+            {isLive && scheduleQ.data
+              ? scheduleQ.data.filter((s) => !s.completed).map((s) => {
+                  const isOverdue = s.next_due < new Date().toISOString().slice(0, 10);
+                  return (
+                    <Card key={s.id} className="p-4">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <div className="font-medium text-sm">{s.task_name}</div>
+                          <div className="text-xs text-muted-foreground">{s.asset_name ?? "General"} · {s.frequency}</div>
+                        </div>
+                        <Badge className={`text-[10px] ${isOverdue ? "bg-destructive/15 text-destructive" : "bg-warning/15 text-warning-foreground"}`}>
+                          {isOverdue ? "Overdue" : "Due Soon"}
+                        </Badge>
+                      </div>
+                      {s.assigned_to && <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1"><User className="size-3" />{s.assigned_to}</div>}
+                      <div className="text-xs text-muted-foreground mb-3">
+                        Next due: <span className="font-medium text-foreground">{s.next_due}</span>
+                        {s.last_done && ` · Last done: ${s.last_done}`}
+                      </div>
+                      <Button size="sm" className="w-full h-7" disabled={completeTaskM.isPending}
+                        onClick={() => completeTaskM.mutate(s.id, { onSuccess: () => toast.success("Task marked complete") })}>
+                        <CheckCircle2 className="size-3.5 mr-1" />Mark Complete
+                      </Button>
+                    </Card>
+                  );
+                })
+              : ASSETS.filter((a) => a.status !== "OK").map((a) => (
+                  <Card key={a.id} className="p-4">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <div className="font-medium text-sm">{a.name}</div>
+                        <div className="text-xs text-muted-foreground">{a.type} · {a.location}</div>
+                      </div>
+                      <Badge className={`text-[10px] ${a.status === "Overdue" ? "bg-destructive/15 text-destructive" : "bg-warning/15 text-warning-foreground"}`}>
+                        {a.status}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground mb-3">
+                      Next service: <span className="font-medium text-foreground">{a.nextService}</span>
+                    </div>
+                    <Button size="sm" className="w-full h-7" onClick={() => toast.success(`PM scheduled for ${a.name}`)}>
+                      Schedule PM Now
+                    </Button>
+                  </Card>
+                ))
+            }
+            {isLive && scheduleQ.data?.filter((s) => !s.completed).length === 0 && (
+              <Card className="col-span-2 p-12 text-center text-muted-foreground">All schedule items are on track.</Card>
+            )}
+            {!isLive && ASSETS.filter((a) => a.status !== "OK").length === 0 && (
               <Card className="col-span-2 p-12 text-center text-muted-foreground">All assets are on schedule.</Card>
             )}
           </div>
@@ -278,6 +348,36 @@ function Maintenance() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Add Asset Dialog */}
+      <Dialog open={newAssetOpen} onOpenChange={setNewAssetOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Add Asset</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label className="text-xs">Asset Name *</Label><Input className="h-8 mt-1" placeholder="e.g. Elevator - Main Lobby" value={newAsset.name} onChange={(e) => setNewAsset({ ...newAsset, name: e.target.value })} /></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">Category</Label><Input className="h-8 mt-1" placeholder="HVAC, Electrical…" value={newAsset.category} onChange={(e) => setNewAsset({ ...newAsset, category: e.target.value })} /></div>
+              <div><Label className="text-xs">Location</Label><Input className="h-8 mt-1" placeholder="Roof, Basement…" value={newAsset.location} onChange={(e) => setNewAsset({ ...newAsset, location: e.target.value })} /></div>
+            </div>
+            <div><Label className="text-xs">Serial Number</Label><Input className="h-8 mt-1" value={newAsset.serial_number} onChange={(e) => setNewAsset({ ...newAsset, serial_number: e.target.value })} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewAssetOpen(false)}>Cancel</Button>
+            <Button disabled={!newAsset.name || createAssetM.isPending}
+              onClick={() => {
+                createAssetM.mutate(
+                  { name: newAsset.name, category: newAsset.category || undefined, location: newAsset.location || undefined, serial_number: newAsset.serial_number || undefined },
+                  {
+                    onSuccess: () => { toast.success("Asset added"); setNewAssetOpen(false); setNewAsset({ name: "", category: "", location: "", serial_number: "" }); },
+                    onError: (e: any) => toast.error(e.message ?? "Failed to add asset"),
+                  }
+                );
+              }}>
+              {createAssetM.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Add Asset"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* New Ticket Dialog */}
       <Dialog open={newOpen} onOpenChange={setNewOpen}>

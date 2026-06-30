@@ -2,19 +2,22 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR, roomStatusMeta, type RoomStatus } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useReservations, useCheckIn, useCheckOut } from "@/lib/api/hooks";
+import {
+  useReservations, useCheckIn, useCheckOut,
+  useBillingFolios, useRecordFolioPayment,
+  useCreateGuest, useCreateReservation, useRooms,
+} from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   LogIn, LogOut, Loader2, Search, Star, Phone, Mail,
-  UserPlus, CreditCard, AlertCircle, Clock, MessageSquare,
+  UserPlus, CreditCard, AlertCircle, MessageSquare,
   BedDouble, CalendarClock,
 } from "lucide-react";
 import { useState, useMemo } from "react";
@@ -39,8 +42,20 @@ function FrontDesk() {
   const isLive = authed && !!live.data;
   const checkInM = useCheckIn();
   const checkOutM = useCheckOut();
+  const billingFoliosQ = useBillingFolios();
+  const recordPayM = useRecordFolioPayment();
+  const createGuestM = useCreateGuest();
+  const createResM = useCreateReservation();
+  const liveRoomsQ = useRooms();
   const { reservations, guests, rooms, checkIn, checkOut, folios, payments, addPayment } = useMHMS();
   const today = new Date().toISOString().slice(0, 10);
+
+  // Build booking_id → folio lookup for O(1) balance access in live mode
+  const liveFolioMap = useMemo(() => {
+    const m = new Map<string, { id: string; balance: number; total_charges: number; total_paid: number }>();
+    (billingFoliosQ.data ?? []).forEach((f) => m.set(f.booking_id, f));
+    return m;
+  }, [billingFoliosQ.data]);
 
   const [searchInhouse, setSearchInhouse] = useState("");
   const [walkInOpen, setWalkInOpen] = useState(false);
@@ -232,9 +247,13 @@ function FrontDesk() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {inhouse.map((r) => {
-                const total = folios.filter((f) => f.reservationId === r.id).reduce((s, f) => s + f.amount, 0);
-                const paid = payments.filter((p) => p.reservationId === r.id).reduce((s, p) => s + p.amount, 0);
-                const balance = total - paid;
+                // Live: use folio from API; Demo: compute from store
+                const liveF = isLive ? liveFolioMap.get(r.id) : null;
+                const demoTotal = !isLive ? folios.filter((f) => f.reservationId === r.id).reduce((s, f) => s + f.amount, 0) : 0;
+                const demoPaid = !isLive ? payments.filter((p) => p.reservationId === r.id).reduce((s, p) => s + p.amount, 0) : 0;
+                const total = isLive ? (liveF?.total_charges ?? 0) : demoTotal;
+                const paid = isLive ? (liveF?.total_paid ?? 0) : demoPaid;
+                const balance = isLive ? (liveF?.balance ?? 0) : (demoTotal - demoPaid);
                 const isDueToday = r.checkOut === today;
                 return (
                   <Card key={r.id} className={`p-4 ${isDueToday ? "border-warning/40 bg-warning/5" : ""}`}>
@@ -255,24 +274,30 @@ function FrontDesk() {
                       <div className="flex justify-between text-muted-foreground">
                         <span>Stay</span><span>{r.checkIn} → {r.checkOut}</span>
                       </div>
-                      {!isLive && (
-                        <>
-                          <div className="flex justify-between text-muted-foreground"><span>Folio Total</span><span>{fmtINR(total)}</span></div>
-                          <div className="flex justify-between text-success"><span>Paid</span><span>{fmtINR(paid)}</span></div>
-                          <div className={`flex justify-between font-semibold border-t pt-1 ${balance > 0 ? "text-destructive" : "text-success"}`}>
-                            <span>Balance</span><span>{fmtINR(balance)}</span>
-                          </div>
-                        </>
-                      )}
+                      <div className="flex justify-between text-muted-foreground"><span>Folio Total</span><span>{fmtINR(total)}</span></div>
+                      <div className="flex justify-between text-success"><span>Paid</span><span>{fmtINR(paid)}</span></div>
+                      <div className={`flex justify-between font-semibold border-t pt-1 ${balance > 0 ? "text-destructive" : "text-success"}`}>
+                        <span>Balance</span><span>{fmtINR(balance)}</span>
+                      </div>
                     </div>
 
                     <div className="flex gap-2">
-                      {!isLive && balance > 0 && (
-                        <Button size="sm" variant="outline" className="flex-1 gap-1 h-8" onClick={() => {
-                          addPayment({ reservationId: r.id, amount: balance, method: "Card", date: today, reference: "TXN" + Date.now() });
-                          toast.success(`${fmtINR(balance)} settled`);
-                        }}>
-                          <CreditCard className="size-3.5" />Settle
+                      {balance > 0 && (
+                        <Button size="sm" variant="outline" className="flex-1 gap-1 h-8"
+                          disabled={recordPayM.isPending}
+                          onClick={() => {
+                            if (isLive && liveF) {
+                              recordPayM.mutate(
+                                { folioId: liveF.id, amount: balance, payment_method: "card", notes: "Settled at checkout" },
+                                { onSuccess: () => { toast.success(`${fmtINR(balance)} settled`); billingFoliosQ.refetch(); },
+                                  onError: (e: any) => toast.error(e.message ?? "Payment failed") }
+                              );
+                            } else {
+                              addPayment({ reservationId: r.id, amount: balance, method: "Card", date: today, reference: "TXN" + Date.now() });
+                              toast.success(`${fmtINR(balance)} settled`);
+                            }
+                          }}>
+                          {recordPayM.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <CreditCard className="size-3.5" />}Settle
                         </Button>
                       )}
                       <Button size="sm" className="flex-1 gap-1 h-8" disabled={checkOutM.isPending}
@@ -310,7 +335,8 @@ function FrontDesk() {
                 <tbody>
                   {filteredInhouse.map((r) => {
                     const nightsLeft = Math.max(0, Math.round((new Date(r.checkOut).getTime() - Date.now()) / 86400000));
-                    const balance = !isLive ? r.rate : 0;
+                    const liveF = isLive ? liveFolioMap.get(r.id) : null;
+                    const balance = isLive ? (liveF?.balance ?? 0) : r.rate;
                     return (
                       <tr key={r.id} className="border-b last:border-0 hover:bg-accent/5">
                         <td className="px-4 py-3">
@@ -449,8 +475,51 @@ function FrontDesk() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setWalkInOpen(false)}>Cancel</Button>
-            <Button disabled={!walkIn.name || !walkIn.phone}
-              onClick={() => { toast.success(`Walk-in registered for ${walkIn.name}`); setWalkInOpen(false); setWalkIn({ name: "", phone: "", email: "", roomType: "Deluxe", nights: "1", payment: "Card", idType: "Aadhar", idNumber: "" }); }}>
+            <Button
+              disabled={!walkIn.name || !walkIn.phone || createGuestM.isPending || createResM.isPending || checkInM.isPending}
+              onClick={async () => {
+                if (!isLive) {
+                  toast.success(`Walk-in registered for ${walkIn.name}`);
+                  setWalkInOpen(false);
+                  setWalkIn({ name: "", phone: "", email: "", roomType: "Deluxe", nights: "1", payment: "Card", idType: "Aadhar", idNumber: "" });
+                  return;
+                }
+                // Find first available room of the requested type
+                const availRoom = (liveRoomsQ.data ?? []).find(
+                  (rm) => rm.status === "available" && rm.room_type.toLowerCase().includes(walkIn.roomType.toLowerCase())
+                ) ?? (liveRoomsQ.data ?? []).find((rm) => rm.status === "available");
+                if (!availRoom) { toast.error("No available rooms for selected type"); return; }
+                const checkInDate = today;
+                const checkOutDate = new Date(Date.now() + Number(walkIn.nights) * 86400000).toISOString().slice(0, 10);
+                try {
+                  // 1. Create guest
+                  const guest = await createGuestM.mutateAsync({ full_name: walkIn.name, phone: walkIn.phone || undefined, email: walkIn.email || undefined });
+                  // 2. Create reservation
+                  const res = await createResM.mutateAsync({
+                    guest_name: walkIn.name,
+                    guest_phone: walkIn.phone || undefined,
+                    guest_email: walkIn.email || undefined,
+                    room_id: availRoom.id,
+                    check_in_date: checkInDate,
+                    check_out_date: checkOutDate,
+                    source: "walk_in",
+                  });
+                  // 3. Immediately check in
+                  checkInM.mutate((res as any)?.id ?? (res as any)?.reservation_id ?? "", {
+                    onSuccess: () => {
+                      toast.success(`${walkIn.name} checked into Room ${availRoom.room_number}`);
+                      setWalkInOpen(false);
+                      setWalkIn({ name: "", phone: "", email: "", roomType: "Deluxe", nights: "1", payment: "Card", idType: "Aadhar", idNumber: "" });
+                      live.refetch();
+                    },
+                    onError: (e: any) => toast.error(e.message ?? "Check-in failed"),
+                  });
+                } catch (e: any) {
+                  toast.error(e.message ?? "Walk-in registration failed");
+                }
+              }}
+            >
+              {(createGuestM.isPending || createResM.isPending || checkInM.isPending) ? <Loader2 className="size-3.5 animate-spin mr-1" /> : null}
               Register & Check In
             </Button>
           </DialogFooter>

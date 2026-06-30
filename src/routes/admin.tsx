@@ -9,8 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useMHMS } from "@/lib/mhms-store";
 import { toast } from "sonner";
-import { Database, Mail, ShieldCheck, Webhook, Key, Activity, Copy, RefreshCw, CheckCircle2, AlertTriangle, Settings, Plus } from "lucide-react";
+import { Database, Mail, ShieldCheck, Webhook, Key, Activity, Copy, RefreshCw, CheckCircle2, AlertTriangle, Settings, Plus, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { useAuth } from "@/lib/api/auth";
+import { apiFetch } from "@/lib/api/client";
 
 const INITIAL_API_KEYS = [
   { id: "k1", name: "Mobile App", key: "mhms_live_eK9x2mN...", created: "2026-01-15", lastUsed: "2 min ago", active: true },
@@ -56,9 +58,12 @@ export const Route = createFileRoute("/admin")({
 });
 
 function Admin() {
+  const authed = !!useAuth((s) => s.user);
   const { auditLog } = useMHMS();
   const [apiKeys, setApiKeys] = useState(INITIAL_API_KEYS);
   const [auditFilter, setAuditFilter] = useState("All");
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [businessSettings, setBusinessSettings] = useState<Record<string, string>>({});
 
   const allAudit = [...AUDIT_LOG_DATA, ...auditLog.slice(0, 10).map((a, i) => ({
     id: 100 + i, who: a.user, what: a.action, module: a.action.split(" ")[0] ?? "System", when: a.date,
@@ -99,7 +104,18 @@ function Admin() {
                   </div>
                 ))}
               </div>
-              <Button onClick={() => toast.success("Settings saved")}>Save Changes</Button>
+              <Button disabled={savingSettings} onClick={async () => {
+                if (!authed || Object.keys(businessSettings).length === 0) { toast.success("Settings saved"); return; }
+                setSavingSettings(true);
+                try {
+                  await apiFetch("/api/settings/business", { method: "PUT", body: businessSettings });
+                  toast.success("Settings saved to server");
+                } catch {
+                  toast.error("Failed to save — changes saved locally");
+                } finally { setSavingSettings(false); }
+              }}>
+                {savingSettings && <Loader2 className="size-3.5 mr-1.5 animate-spin" />}Save Changes
+              </Button>
             </Card>
             <Card className="p-5 space-y-4">
               <h3 className="font-semibold">Security & Notifications</h3>

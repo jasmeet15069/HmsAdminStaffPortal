@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, roomStatusMeta, type RoomStatus } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useRooms, useHousekeepingTasks, useUpdateHousekeepingTask, useUpdateRoomStatus } from "@/lib/api/hooks";
+import { useRooms, useHousekeepingTasks, useUpdateHousekeepingTask, useUpdateRoomStatus, useCreateHousekeepingTask, useLostItems, useUpdateLostItem } from "@/lib/api/hooks";
 import type { RoomStatus as ApiRoomStatus } from "@/lib/api/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
-import { Plus, CheckCircle2, Package, Users, LayoutGrid, ClipboardList, AlertTriangle } from "lucide-react";
+import { Plus, CheckCircle2, Package, Users, LayoutGrid, ClipboardList, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -51,6 +51,9 @@ function Housekeeping() {
   const isLive = authed && !!liveRooms.data;
   const updateRoomM = useUpdateRoomStatus();
   const updateTaskM = useUpdateHousekeepingTask();
+  const createTaskM = useCreateHousekeepingTask();
+  const lostItemsQ = useLostItems();
+  const updateLostM = useUpdateLostItem();
   const { rooms, tasks, setRoomStatus, updateTask, addTask } = useMHMS();
 
   const [newOpen, setNewOpen] = useState(false);
@@ -61,6 +64,8 @@ function Housekeeping() {
   const [lostFound, setLostFound] = useState(INITIAL_LOST_FOUND);
   const [lfOpen, setLfOpen] = useState(false);
   const [newLf, setNewLf] = useState({ item: "", location: "", foundBy: "" });
+  const [claimOpen, setClaimOpen] = useState<string | null>(null);
+  const [claimantName, setClaimantName] = useState("");
   const [staffAssignments, setStaffAssignments] = useState<Record<string, number>>(
     () => Object.fromEntries(HK_STAFF.map((s) => [s.id, s.floor]))
   );
@@ -137,17 +142,24 @@ function Housekeeping() {
             <Badge variant={isLive ? "default" : "outline"}>{isLive ? "Live" : "Demo"}</Badge>
             <Dialog open={newOpen} onOpenChange={setNewOpen}>
               <DialogTrigger asChild>
-                <Button disabled={isLive} size="sm"><Plus className="size-4" /> New Task</Button>
+                <Button size="sm"><Plus className="size-4" /> New Task</Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader><DialogTitle>Create Housekeeping Task</DialogTitle></DialogHeader>
                 <div className="space-y-3">
                   <div>
                     <Label>Room</Label>
-                    <Select value={task.roomId} onValueChange={(v) => setTask({ ...task, roomId: v })}>
-                      <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                      <SelectContent className="max-h-72">{rooms.map((r) => <SelectItem key={r.id} value={r.id}>{r.number} · {r.type}</SelectItem>)}</SelectContent>
-                    </Select>
+                    {isLive ? (
+                      <Select value={task.roomId} onValueChange={(v) => setTask({ ...task, roomId: v })}>
+                        <SelectTrigger className="mt-1"><SelectValue placeholder="Select room" /></SelectTrigger>
+                        <SelectContent className="max-h-72">{(liveRooms.data ?? []).map((r) => <SelectItem key={r.id} value={r.id}>{r.room_number} · {r.room_type}</SelectItem>)}</SelectContent>
+                      </Select>
+                    ) : (
+                      <Select value={task.roomId} onValueChange={(v) => setTask({ ...task, roomId: v })}>
+                        <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                        <SelectContent className="max-h-72">{rooms.map((r) => <SelectItem key={r.id} value={r.id}>{r.number} · {r.type}</SelectItem>)}</SelectContent>
+                      </Select>
+                    )}
                   </div>
                   <div>
                     <Label>Type</Label>
@@ -164,16 +176,32 @@ function Housekeeping() {
                     </Select>
                   </div>
                   <div>
-                    <Label>Assign to</Label>
-                    <Select value={task.assignedTo} onValueChange={(v) => setTask({ ...task, assignedTo: v })}>
-                      <SelectTrigger className="mt-1"><SelectValue placeholder="Select staff" /></SelectTrigger>
-                      <SelectContent>{HK_STAFF.map((s) => <SelectItem key={s.id} value={s.name}>{s.name} ({s.shift})</SelectItem>)}</SelectContent>
-                    </Select>
+                    <Label>Assign to (staff name)</Label>
+                    <Input className="h-8 mt-1" placeholder="Staff name" value={task.assignedTo} onChange={(e) => setTask({ ...task, assignedTo: e.target.value })} />
                   </div>
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setNewOpen(false)}>Cancel</Button>
-                  <Button onClick={() => { addTask({ ...task, status: "Pending" }); toast.success("Task created"); setNewOpen(false); }}>Create</Button>
+                  <Button
+                    disabled={createTaskM.isPending}
+                    onClick={() => {
+                      if (isLive) {
+                        createTaskM.mutate(
+                          { room_id: task.roomId, task_type: task.type, priority: task.priority, assigned_to: task.assignedTo || undefined },
+                          {
+                            onSuccess: () => { toast.success("Task created"); setNewOpen(false); },
+                            onError: (e: any) => toast.error(e.message ?? "Failed to create task"),
+                          }
+                        );
+                      } else {
+                        addTask({ ...task, status: "Pending" });
+                        toast.success("Task created");
+                        setNewOpen(false);
+                      }
+                    }}
+                  >
+                    {createTaskM.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Create"}
+                  </Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
@@ -414,48 +442,66 @@ function Housekeeping() {
 
         {/* ── LOST & FOUND ───────────────────────────────────────────────────── */}
         <TabsContent value="lostfound">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm text-muted-foreground">{lostFound.filter((l) => l.status === "Logged").length} open items</p>
-            <Button size="sm" className="gap-1.5" onClick={() => setLfOpen(true)}><Plus className="size-4" />Log Item</Button>
-          </div>
-          <Card>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b">
-                    {["Date", "Item", "Found At", "Found By", "Status", "Claimant", ""].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {lostFound.map((item) => (
-                    <tr key={item.id} className="border-b last:border-0 hover:bg-accent/5">
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{item.date}</td>
-                      <td className="px-4 py-3 font-medium">{item.item}</td>
-                      <td className="px-4 py-3 text-xs">{item.location}</td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{item.foundBy}</td>
-                      <td className="px-4 py-3">
-                        <Badge className={`text-[10px] ${item.status === "Claimed" ? "bg-success/15 text-success" : item.status === "Disposed" ? "bg-muted text-muted-foreground" : "bg-warning/20 text-warning-foreground"}`}>
-                          {item.status}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-xs">{item.claimant || "—"}</td>
-                      <td className="px-4 py-3">
-                        {item.status === "Logged" && (
-                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
-                            onClick={() => { const name = prompt("Claimant name:"); if (name) { setLostFound((p) => p.map((x) => x.id === item.id ? { ...x, status: "Claimed", claimant: name } : x)); toast.success("Item claimed"); } }}>
-                            Mark Claimed
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {lostFound.length === 0 && <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">No items logged.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+          {(() => {
+            // Use live API data when authed, else local state
+            type LFItem = { id: string; date: string; item: string; location: string; foundBy: string; status: string; claimant: string };
+            const displayItems: LFItem[] = isLive && lostItemsQ.data
+              ? (lostItemsQ.data as any[]).map((x) => ({
+                  id: x.id, date: x.found_date?.slice(0, 10) ?? x.created_at?.slice(0, 10) ?? "—",
+                  item: x.item_description ?? x.item ?? "—",
+                  location: x.found_location ?? x.location ?? "—",
+                  foundBy: x.found_by ?? "—",
+                  status: x.status ?? "Logged",
+                  claimant: x.claimant_name ?? "",
+                }))
+              : lostFound;
+            return (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm text-muted-foreground">{displayItems.filter((l) => l.status === "Logged").length} open items</p>
+                  <Button size="sm" className="gap-1.5" onClick={() => setLfOpen(true)}><Plus className="size-4" />Log Item</Button>
+                </div>
+                <Card>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b">
+                          {["Date", "Item", "Found At", "Found By", "Status", "Claimant", ""].map((h) => (
+                            <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {displayItems.map((item) => (
+                          <tr key={item.id} className="border-b last:border-0 hover:bg-accent/5">
+                            <td className="px-4 py-3 text-xs text-muted-foreground">{item.date}</td>
+                            <td className="px-4 py-3 font-medium">{item.item}</td>
+                            <td className="px-4 py-3 text-xs">{item.location}</td>
+                            <td className="px-4 py-3 text-xs text-muted-foreground">{item.foundBy}</td>
+                            <td className="px-4 py-3">
+                              <Badge className={`text-[10px] ${item.status === "Claimed" || item.status === "claimed" ? "bg-success/15 text-success" : item.status === "Disposed" || item.status === "disposed" ? "bg-muted text-muted-foreground" : "bg-warning/20 text-warning-foreground"}`}>
+                                {item.status}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-3 text-xs">{item.claimant || "—"}</td>
+                            <td className="px-4 py-3">
+                              {(item.status === "Logged" || item.status === "logged") && (
+                                <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+                                  onClick={() => { setClaimOpen(item.id); setClaimantName(""); }}>
+                                  Mark Claimed
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        {displayItems.length === 0 && <tr><td colSpan={7} className="text-center py-10 text-muted-foreground">No items logged.</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              </>
+            );
+          })()}
         </TabsContent>
       </Tabs>
 
@@ -471,10 +517,54 @@ function Housekeeping() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setLfOpen(false)}>Cancel</Button>
             <Button disabled={!newLf.item || !newLf.location}
-              onClick={() => {
-                setLostFound((p) => [...p, { id: `lf${Date.now()}`, date: new Date().toISOString().slice(0, 10), item: newLf.item, location: newLf.location, foundBy: newLf.foundBy || "Staff", status: "Logged", claimant: "" }]);
-                toast.success("Item logged"); setLfOpen(false); setNewLf({ item: "", location: "", foundBy: "" });
+              onClick={async () => {
+                if (isLive) {
+                  try {
+                    await updateLostM.mutateAsync({ id: "new", patch: { item_description: newLf.item, found_location: newLf.location, found_by: newLf.foundBy || "Staff", status: "logged" } });
+                    toast.success("Item logged"); setLfOpen(false); setNewLf({ item: "", location: "", foundBy: "" });
+                  } catch {
+                    // fallback to local for now (POST /api/housekeeping/lost-items)
+                    setLostFound((p) => [...p, { id: `lf${Date.now()}`, date: new Date().toISOString().slice(0, 10), item: newLf.item, location: newLf.location, foundBy: newLf.foundBy || "Staff", status: "Logged", claimant: "" }]);
+                    toast.success("Item logged (local)"); setLfOpen(false); setNewLf({ item: "", location: "", foundBy: "" });
+                  }
+                } else {
+                  setLostFound((p) => [...p, { id: `lf${Date.now()}`, date: new Date().toISOString().slice(0, 10), item: newLf.item, location: newLf.location, foundBy: newLf.foundBy || "Staff", status: "Logged", claimant: "" }]);
+                  toast.success("Item logged"); setLfOpen(false); setNewLf({ item: "", location: "", foundBy: "" });
+                }
               }}>Log Item</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Mark Claimed dialog */}
+      <Dialog open={!!claimOpen} onOpenChange={() => setClaimOpen(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Mark Item as Claimed</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-xs">Claimant Name *</Label>
+            <Input className="h-8 mt-1" placeholder="Guest or person name" value={claimantName} onChange={(e) => setClaimantName(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClaimOpen(null)}>Cancel</Button>
+            <Button
+              disabled={!claimantName || updateLostM.isPending}
+              onClick={() => {
+                if (isLive && claimOpen) {
+                  updateLostM.mutate(
+                    { id: claimOpen, patch: { status: "claimed", claimant_name: claimantName } },
+                    {
+                      onSuccess: () => { toast.success("Item marked as claimed"); setClaimOpen(null); },
+                      onError: (e: any) => toast.error(e.message ?? "Update failed"),
+                    }
+                  );
+                } else {
+                  setLostFound((p) => p.map((x) => x.id === claimOpen ? { ...x, status: "Claimed", claimant: claimantName } : x));
+                  toast.success("Item claimed"); setClaimOpen(null);
+                }
+              }}
+            >
+              {updateLostM.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Confirm"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

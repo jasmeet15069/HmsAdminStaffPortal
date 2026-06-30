@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
-import { useConsolidatedReport } from "@/lib/api/hooks";
+import { useConsolidatedReport, useOccupancyReport, useRevenueReport, useComplaintsReport, useStaffActivityReport, useAIUsageReport } from "@/lib/api/hooks";
+import { useAuth } from "@/lib/api/auth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -45,8 +46,15 @@ export const Route = createFileRoute("/reports")({
 });
 
 function Reports() {
+  const authed = !!useAuth((s) => s.user);
   const { folios, reservations, payments, guests, rooms } = useMHMS();
   const liveReport = useConsolidatedReport().data;
+  const occupancyQ = useOccupancyReport();
+  const revenueQ = useRevenueReport();
+  const complaintsQ = useComplaintsReport();
+  const staffQ = useStaffActivityReport();
+  const aiQ = useAIUsageReport();
+  const isLive = authed;
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("All");
 
@@ -78,19 +86,35 @@ function Reports() {
 
   const runReport = (name: string) => {
     let rows: Record<string, unknown>[] = [];
-    if (name === "Daily Revenue") rows = monthly.map((m) => ({ month: m.month, revenue: m.revenue, occupancy: m.occupancy }));
-    else if (name === "Source Mix") rows = sourceMix.map((s) => ({ source: s.name, bookings: s.value }));
-    else if (name === "Folio Aging") rows = reservations.map((r) => {
-      const t = folios.filter((f) => f.reservationId === r.id).reduce((s, f) => s + f.amount, 0);
-      const p = payments.filter((x) => x.reservationId === r.id).reduce((s, x) => s + x.amount, 0);
-      return { code: r.code, guest: guests.find((g) => g.id === r.guestId)?.name, charges: t, paid: p, balance: t - p };
-    });
-    else if (name === "Guest Demographics") rows = guests.map((g) => ({ name: g.name, tier: g.loyaltyTier, points: g.loyaltyPoints, stays: g.totalStays, nationality: g.nationality }));
-    else if (name === "Occupancy by Type") {
-      const groups: Record<string, { type: string; total: number; occupied: number }> = {};
-      rooms.forEach((r) => { groups[r.type] ??= { type: r.type, total: 0, occupied: 0 }; groups[r.type].total++; if (r.status === "occupied") groups[r.type].occupied++; });
-      rows = Object.values(groups).map((g) => ({ type: g.type, total: g.total, occupied: g.occupied, occupancy_pct: Math.round((g.occupied / g.total) * 100) }));
-    } else rows = reservations.map((r) => ({ code: r.code, status: r.status, source: r.source, rate: r.rate, checkIn: r.checkIn, checkOut: r.checkOut }));
+    if (name === "Daily Revenue") {
+      rows = isLive && revenueQ.data
+        ? (Array.isArray(revenueQ.data) ? revenueQ.data : [revenueQ.data]).map((r: any) => ({ date: r.date, revenue: r.revenue, occupancy: r.occupancy }))
+        : monthly.map((m) => ({ month: m.month, revenue: m.revenue, occupancy: m.occupancy }));
+    } else if (name === "Occupancy by Type") {
+      rows = isLive && occupancyQ.data
+        ? (Array.isArray(occupancyQ.data) ? occupancyQ.data : [occupancyQ.data]).map((r: any) => ({ type: r.room_type ?? r.type, occupancy_pct: r.occupancy_rate ?? r.occupancy_pct, total: r.total }))
+        : (() => {
+            const groups: Record<string, { type: string; total: number; occupied: number }> = {};
+            rooms.forEach((r) => { groups[r.type] ??= { type: r.type, total: 0, occupied: 0 }; groups[r.type].total++; if (r.status === "occupied") groups[r.type].occupied++; });
+            return Object.values(groups).map((g) => ({ type: g.type, total: g.total, occupied: g.occupied, occupancy_pct: Math.round((g.occupied / g.total) * 100) }));
+          })();
+    } else if (name === "Source Mix") {
+      rows = sourceMix.map((s) => ({ source: s.name, bookings: s.value }));
+    } else if (name === "Folio Aging") {
+      rows = reservations.map((r) => {
+        const t = folios.filter((f) => f.reservationId === r.id).reduce((s, f) => s + f.amount, 0);
+        const p = payments.filter((x) => x.reservationId === r.id).reduce((s, x) => s + x.amount, 0);
+        return { code: r.code, guest: guests.find((g) => g.id === r.guestId)?.name, charges: t, paid: p, balance: t - p };
+      });
+    } else if (name === "Guest Demographics") {
+      rows = guests.map((g) => ({ name: g.name, tier: g.loyaltyTier, points: g.loyaltyPoints, stays: g.totalStays, nationality: g.nationality }));
+    } else if (name === "Maintenance SLA" && isLive && complaintsQ.data) {
+      rows = (Array.isArray(complaintsQ.data) ? complaintsQ.data : [complaintsQ.data]).map((r: any) => r);
+    } else if (name === "Payroll Summary" && isLive && staffQ.data) {
+      rows = (Array.isArray(staffQ.data) ? staffQ.data : [staffQ.data]).map((r: any) => r);
+    } else {
+      rows = reservations.map((r) => ({ code: r.code, status: r.status, source: r.source, rate: r.rate, checkIn: r.checkIn, checkOut: r.checkOut }));
+    }
     downloadCSV(`${name.replace(/[^\w]+/g, "-").toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
     toast.success(`Exported "${name}" (${rows.length} rows)`);
   };

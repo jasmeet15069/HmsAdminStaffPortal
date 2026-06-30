@@ -11,11 +11,12 @@ import { apiFetch } from "./client";
 import { isAuthenticated } from "./auth";
 import type {
   ApiUser,
+  Asset,
+  ChannelConnection,
+  CompetitorRate,
   CreatePosOrderBody,
-  PosOrderApi,
-  TenantModulesResponse,
-  PlatformPlan,
-  PlatformTenant,
+  CreateReservationInput,
+  CreateRoomInput,
   CreateTenantBody,
   BillingFolio,
   BillingFolioDetail,
@@ -23,19 +24,32 @@ import type {
   BillingTransaction,
   CloseDayResponse,
   ConsolidatedReport,
-  CreateReservationInput,
-  CreateRoomInput,
   DashboardData,
   DashboardStats,
+  GuestDetail,
   Guest,
   HousekeepingTask,
+  InventoryItem,
+  LoyaltyMember,
+  LoyaltyTier,
+  MaintenanceScheduleItem,
   NightAuditChecklistItem,
   NightAuditReport,
   NightAuditRevenueItem,
+  NightAuditTaxItem,
+  PlatformPlan,
+  PlatformTenant,
+  PosOrderApi,
+  PricingRule,
+  Promotion,
+  PurchaseOrder,
   Reservation,
+  ReservationDetail,
   Room,
   RoomStatus,
   Session,
+  TenantModulesResponse,
+  Vendor,
 } from "./types";
 
 export const queryKeys = {
@@ -508,5 +522,551 @@ export function useDeletePosOrder() {
   return useMutation({
     mutationFn: (id: string) => apiFetch(`/api/pos/orders/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pos", "orders"] }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Reservation detail & mutations
+// ---------------------------------------------------------------------------
+
+export function useReservationDetail(id: string | null) {
+  return useQuery({
+    queryKey: ["reservations", "detail", id] as const,
+    queryFn: () => apiFetch<ReservationDetail>(`/api/reservations/${id}`),
+    enabled: isAuthenticated() && !!id,
+  });
+}
+
+export function useUpdateReservation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: { check_in_date?: string; check_out_date?: string; notes?: string; status?: string };
+    }) => apiFetch(`/api/reservations/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["reservations"] });
+      qc.invalidateQueries({ queryKey: ["reservations", "detail", v.id] });
+    },
+  });
+}
+
+export function useCancelReservation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/reservations/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reservations"] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// CRM — Guests
+// ---------------------------------------------------------------------------
+
+export function useGuestDetail(id: string | null) {
+  return useQuery({
+    queryKey: ["crm", "guests", id] as const,
+    queryFn: () => apiFetch<GuestDetail>(`/api/crm/guests/${id}`),
+    enabled: isAuthenticated() && !!id,
+  });
+}
+
+export function useUpdateGuest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<GuestDetail> }) =>
+      apiFetch(`/api/crm/guests/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["crm", "guests"] });
+      qc.invalidateQueries({ queryKey: ["crm", "guests", v.id] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// CRM — Loyalty
+// ---------------------------------------------------------------------------
+
+export function useLoyaltyTiers() {
+  return useQuery({
+    queryKey: ["crm", "loyalty", "tiers"] as const,
+    queryFn: () =>
+      apiFetch<LoyaltyTier[] | null>("/api/crm/loyalty/tiers").then((t) => t ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useCreateLoyaltyTier() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; min_points: number; multiplier: number; benefits?: Record<string, unknown> }) =>
+      apiFetch("/api/crm/loyalty/tiers", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["crm", "loyalty", "tiers"] }),
+  });
+}
+
+export function useUpdateLoyaltyTier() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<LoyaltyTier> }) =>
+      apiFetch(`/api/crm/loyalty/tiers/${id}`, { method: "PUT", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["crm", "loyalty", "tiers"] }),
+  });
+}
+
+export function useLoyaltyMembers() {
+  return useQuery({
+    queryKey: ["crm", "loyalty", "members"] as const,
+    queryFn: () =>
+      apiFetch<LoyaltyMember[] | null>("/api/crm/loyalty/members").then((m) => m ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useAwardLoyaltyPoints() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { guest_id: string; points: number; reference?: string; description?: string }) =>
+      apiFetch("/api/crm/loyalty/points/award", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["crm", "loyalty", "members"] }),
+  });
+}
+
+export function useRedeemLoyaltyPoints() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { guest_id: string; points: number; reference?: string; description?: string }) =>
+      apiFetch("/api/crm/loyalty/points/redeem", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["crm", "loyalty", "members"] }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Housekeeping — create task
+// ---------------------------------------------------------------------------
+
+export function useCreateHousekeepingTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      room_id: string;
+      task_type: string;
+      priority: string;
+      notes?: string;
+      assigned_to?: string;
+    }) => apiFetch("/api/housekeeping/tasks", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["housekeeping"] }),
+  });
+}
+
+export function useUpdateLostItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Record<string, unknown> }) =>
+      apiFetch(`/api/housekeeping/lost-items/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["housekeeping", "lost-items"] }),
+  });
+}
+
+export function useLostItems() {
+  return useQuery({
+    queryKey: ["housekeeping", "lost-items"] as const,
+    queryFn: () =>
+      apiFetch<unknown[] | null>("/api/housekeeping/lost-items").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useLinenInventory() {
+  return useQuery({
+    queryKey: ["housekeeping", "linen"] as const,
+    queryFn: () =>
+      apiFetch<unknown[] | null>("/api/housekeeping/linen").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Revenue
+// ---------------------------------------------------------------------------
+
+export function usePricingRules() {
+  return useQuery({
+    queryKey: ["revenue", "pricing-rules"] as const,
+    queryFn: () =>
+      apiFetch<PricingRule[] | null>("/api/revenue/pricing-rules").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useCreatePricingRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<PricingRule>) =>
+      apiFetch("/api/revenue/pricing-rules", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["revenue", "pricing-rules"] }),
+  });
+}
+
+export function useUpdatePricingRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<PricingRule> }) =>
+      apiFetch(`/api/revenue/pricing-rules/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["revenue", "pricing-rules"] }),
+  });
+}
+
+export function useDeletePricingRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/revenue/pricing-rules/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["revenue", "pricing-rules"] }),
+  });
+}
+
+export function useCompetitorRates() {
+  return useQuery({
+    queryKey: ["revenue", "competitors"] as const,
+    queryFn: () =>
+      apiFetch<CompetitorRate[] | null>("/api/revenue/competitors").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useRevenueForecast() {
+  return useQuery({
+    queryKey: ["revenue", "forecast"] as const,
+    queryFn: () => apiFetch<unknown[] | null>("/api/revenue/forecast").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Procurement
+// ---------------------------------------------------------------------------
+
+export function useVendors() {
+  return useQuery({
+    queryKey: ["procurement", "vendors"] as const,
+    queryFn: () => apiFetch<Vendor[] | null>("/api/procurement/vendors").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useCreateVendor() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<Vendor>) =>
+      apiFetch("/api/procurement/vendors", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["procurement", "vendors"] }),
+  });
+}
+
+export function useUpdateVendor() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<Vendor> }) =>
+      apiFetch(`/api/procurement/vendors/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["procurement", "vendors"] }),
+  });
+}
+
+export function usePurchaseOrders() {
+  return useQuery({
+    queryKey: ["procurement", "purchase-orders"] as const,
+    queryFn: () =>
+      apiFetch<PurchaseOrder[] | null>("/api/procurement/purchase-orders").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useCreatePurchaseOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<PurchaseOrder>) =>
+      apiFetch("/api/procurement/purchase-orders", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["procurement", "purchase-orders"] }),
+  });
+}
+
+export function useUpdatePOStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      apiFetch(`/api/procurement/purchase-orders/${id}/status`, { method: "PATCH", body: { status } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["procurement", "purchase-orders"] }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Channel Manager
+// ---------------------------------------------------------------------------
+
+export function useChannelConnections() {
+  return useQuery({
+    queryKey: ["channel", "connections"] as const,
+    queryFn: () =>
+      apiFetch<ChannelConnection[] | null>("/api/channel/connections").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useCreateChannelConnection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<ChannelConnection>) =>
+      apiFetch("/api/channel/connections", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["channel"] }),
+  });
+}
+
+export function useUpdateChannelConnection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<ChannelConnection> }) =>
+      apiFetch(`/api/channel/connections/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["channel"] }),
+  });
+}
+
+export function useDeleteChannelConnection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/channel/connections/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["channel"] }),
+  });
+}
+
+export function useChannelAnalytics() {
+  return useQuery({
+    queryKey: ["channel", "analytics"] as const,
+    queryFn: () => apiFetch<unknown>("/api/channel/analytics"),
+    enabled: isAuthenticated(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Booking Engine / Promotions
+// ---------------------------------------------------------------------------
+
+export function usePromotions() {
+  return useQuery({
+    queryKey: ["booking", "promotions"] as const,
+    queryFn: () =>
+      apiFetch<Promotion[] | null>("/api/booking/promotions").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useCreatePromotion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<Promotion>) =>
+      apiFetch("/api/booking/promotions", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["booking", "promotions"] }),
+  });
+}
+
+export function useUpdatePromotion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<Promotion> }) =>
+      apiFetch(`/api/booking/promotions/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["booking", "promotions"] }),
+  });
+}
+
+export function useDeletePromotion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/booking/promotions/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["booking", "promotions"] }),
+  });
+}
+
+export function useBookingAvailability(params?: { check_in?: string; check_out?: string; room_type?: string }) {
+  const query = Object.fromEntries(Object.entries(params ?? {}).filter(([, v]) => v)) as Record<string, string>;
+  return useQuery({
+    queryKey: ["booking", "availability", query] as const,
+    queryFn: () => apiFetch<unknown>("/api/booking/availability", { query }),
+    enabled: isAuthenticated() && !!(params?.check_in && params?.check_out),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Maintenance / Assets
+// ---------------------------------------------------------------------------
+
+export function useAssets() {
+  return useQuery({
+    queryKey: ["maintenance", "assets"] as const,
+    queryFn: () => apiFetch<Asset[] | null>("/api/maintenance/assets").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useCreateAsset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<Asset>) =>
+      apiFetch("/api/maintenance/assets", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["maintenance", "assets"] }),
+  });
+}
+
+export function useUpdateAsset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<Asset> }) =>
+      apiFetch(`/api/maintenance/assets/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["maintenance", "assets"] }),
+  });
+}
+
+export function useMaintenanceSchedule() {
+  return useQuery({
+    queryKey: ["maintenance", "schedule"] as const,
+    queryFn: () =>
+      apiFetch<MaintenanceScheduleItem[] | null>("/api/maintenance/schedule").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useCreateMaintenanceTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<MaintenanceScheduleItem>) =>
+      apiFetch("/api/maintenance/schedule", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["maintenance", "schedule"] }),
+  });
+}
+
+export function useCompleteMaintenanceTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch(`/api/maintenance/schedule/${id}/complete`, { method: "PATCH" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["maintenance", "schedule"] }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Night Audit extended
+// ---------------------------------------------------------------------------
+
+export function useNightAuditTax() {
+  return useQuery({
+    queryKey: ["night-audit", "tax"] as const,
+    queryFn: () =>
+      apiFetch<NightAuditTaxItem[] | null>("/api/night-audit/tax-audit").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
+
+export function useOccupancyReport(params?: { from?: string; to?: string }) {
+  return useQuery({
+    queryKey: ["reports", "occupancy", params ?? {}] as const,
+    queryFn: () => apiFetch<unknown>("/api/reports/occupancy", { query: params }),
+    enabled: isAuthenticated(),
+    staleTime: 60_000,
+  });
+}
+
+export function useRevenueReport(params?: { from?: string; to?: string }) {
+  return useQuery({
+    queryKey: ["reports", "revenue", params ?? {}] as const,
+    queryFn: () => apiFetch<unknown>("/api/reports/revenue", { query: params }),
+    enabled: isAuthenticated(),
+    staleTime: 60_000,
+  });
+}
+
+export function useComplaintsReport() {
+  return useQuery({
+    queryKey: ["reports", "complaints"] as const,
+    queryFn: () => apiFetch<unknown>("/api/reports/complaints"),
+    enabled: isAuthenticated(),
+    staleTime: 60_000,
+  });
+}
+
+export function useBookingsPaceReport() {
+  return useQuery({
+    queryKey: ["reports", "bookings-pace"] as const,
+    queryFn: () => apiFetch<unknown>("/api/reports/bookings-pace"),
+    enabled: isAuthenticated(),
+    staleTime: 60_000,
+  });
+}
+
+export function useStaffActivityReport() {
+  return useQuery({
+    queryKey: ["reports", "staff-activity"] as const,
+    queryFn: () => apiFetch<unknown>("/api/reports/staff-activity"),
+    enabled: isAuthenticated(),
+    staleTime: 60_000,
+  });
+}
+
+export function useAIUsageReport() {
+  return useQuery({
+    queryKey: ["reports", "ai-usage"] as const,
+    queryFn: () => apiFetch<unknown>("/api/reports/ai-usage"),
+    enabled: isAuthenticated(),
+    staleTime: 60_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Inventory
+// ---------------------------------------------------------------------------
+
+export function useInventoryItems() {
+  return useQuery({
+    queryKey: ["inventory", "items"] as const,
+    queryFn: () =>
+      apiFetch<InventoryItem[] | null>("/api/tables/inventory_items").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Properties / Branches
+// ---------------------------------------------------------------------------
+
+export function useProperties() {
+  return useQuery({
+    queryKey: ["properties"] as const,
+    queryFn: () => apiFetch<unknown[] | null>("/api/tables/properties").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Front-desk: walk-in creates a reservation via API
+// ---------------------------------------------------------------------------
+
+export function useCreateGuest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      full_name: string;
+      email?: string;
+      phone?: string;
+      id_type?: string;
+      id_number?: string;
+    }) => apiFetch<GuestDetail>("/api/crm/guests", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["crm", "guests"] }),
   });
 }

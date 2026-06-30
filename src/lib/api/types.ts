@@ -422,3 +422,225 @@ export interface CreatePosOrderBody {
   tax: number;
   items: PosOrderItemApi[];
 }
+
+// ---------------------------------------------------------------------------
+// Loyalty / CRM
+// ---------------------------------------------------------------------------
+
+export interface LoyaltyTier {
+  id: string;
+  hotel_id: string;
+  name: string;
+  min_points: number;
+  multiplier: number;
+  benefits: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface LoyaltyMember {
+  id: string;
+  hotel_id: string;
+  guest_id: string;
+  tier_id: string | null;
+  points: number;
+  lifetime_points: number;
+  enrolled_at: string;
+  guest_name?: string;
+  guest_email?: string;
+  tier_name?: string;
+}
+
+export interface GuestDetail {
+  id: string;
+  hotel_id: string;
+  user_id: string | null;
+  full_name: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  country: string | null;
+  id_type: string | null;
+  id_number: string | null;
+  vip_status: string;
+  notes: string | null;
+  preferences: Record<string, unknown>;
+  total_stays?: number;
+  loyalty_points?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Reservation detail (GET /api/reservations/:id — same shape as list item)
+// ---------------------------------------------------------------------------
+
+export interface ReservationDetail extends Reservation {
+  notes?: string | null;
+  guest_id?: string | null;
+  room_id?: string | null;
+  adults?: number;
+  children?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Procurement
+// ---------------------------------------------------------------------------
+
+export interface Vendor {
+  id: string;
+  hotel_id: string;
+  name: string;
+  contact_person: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  category: string | null;
+  rating: number | null;
+  active: boolean;
+  created_at: string;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  hotel_id: string;
+  vendor_id: string | null;
+  po_number: string;
+  status: string;
+  items: unknown[];
+  total: number;
+  notes: string | null;
+  issued_at: string | null;
+  received_at: string | null;
+  created_at: string;
+  vendor_name?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Revenue
+// ---------------------------------------------------------------------------
+
+export interface PricingRule {
+  id: string;
+  hotel_id: string;
+  name: string;
+  rule_type: string;
+  conditions: Record<string, unknown>;
+  adjustment: number;
+  priority: number;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompetitorRate {
+  id: string;
+  hotel_id: string;
+  competitor_name: string;
+  room_type: string;
+  our_rate: number;
+  their_rate: number;
+}
+
+// ---------------------------------------------------------------------------
+// Maintenance / Assets
+// ---------------------------------------------------------------------------
+
+export interface Asset {
+  id: string;
+  hotel_id: string;
+  name: string;
+  category: string | null;
+  location: string | null;
+  serial_number: string | null;
+  purchase_date: string | null;
+  purchase_cost: number | null;
+  warranty_until: string | null;
+  status: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface MaintenanceScheduleItem {
+  id: string;
+  hotel_id: string;
+  asset_id: string | null;
+  task_name: string;
+  frequency: string;
+  last_done: string | null;
+  next_due: string;
+  assigned_to: string | null;
+  notes: string | null;
+  completed: boolean;
+  completed_at: string | null;
+  created_at: string;
+  asset_name?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Channel
+// ---------------------------------------------------------------------------
+
+export interface ChannelConnection {
+  id: string;
+  hotel_id: string;
+  channel_name: string;
+  channel_type: string;
+  api_key: string | null;
+  settings: Record<string, unknown>;
+  connected: boolean;
+  last_sync_at: string | null;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Promotions / Bookings
+// ---------------------------------------------------------------------------
+
+export interface Promotion {
+  id: string;
+  hotel_id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  discount_type: string;
+  discount_value: number;
+  min_nights: number;
+  min_amount: number;
+  max_discount: number | null;
+  usage_limit: number;
+  used_count: number;
+  valid_from: string;
+  valid_to: string;
+  active: boolean;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Night Audit extended
+// ---------------------------------------------------------------------------
+
+export interface NightAuditTaxItem {
+  category: string;
+  base_amount: number;
+  tax_rate: number;
+  tax_amount: number;
+}
+
+// ---------------------------------------------------------------------------
+// Inventory
+// ---------------------------------------------------------------------------
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  unit: string;
+  current_stock: number;
+  min_stock: number;
+  cost_per_unit: number | null;
+  is_perishable: boolean;
+  expiry_date: string | null;
+  supplier: string | null;
+  created_at: string;
+  updated_at: string;
+}

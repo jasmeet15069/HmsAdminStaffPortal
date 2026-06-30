@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useGuests } from "@/lib/api/hooks";
+import { useGuests, useLoyaltyTiers, useCreateLoyaltyTier, useLoyaltyMembers } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
-import { Star, Search, Plus, Send, Users, Gift, TrendingUp } from "lucide-react";
+import { Star, Search, Plus, Send, Users, Gift, TrendingUp, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -46,12 +46,17 @@ export const Route = createFileRoute("/crm")({
 function CRM() {
   const authed = !!useAuth((s) => s.user);
   const liveGuests = useGuests();
+  const liveTiersQ = useLoyaltyTiers();
+  const createTierM = useCreateLoyaltyTier();
+  const loyaltyMembersQ = useLoyaltyMembers();
   const isLive = authed && !!liveGuests.data;
   const { guests, reservations } = useMHMS();
   const [q, setQ] = useState("");
   const [tierFilter, setTierFilter] = useState("All");
   const [selectedGuest, setSelectedGuest] = useState<GuestRow | null>(null);
   const [newCampaignOpen, setNewCampaignOpen] = useState(false);
+  const [newTierOpen, setNewTierOpen] = useState(false);
+  const [newTier, setNewTier] = useState({ name: "", min_points: "0", multiplier: "1", benefits: "" });
 
   const rows: GuestRow[] = useMemo(() => {
     if (isLive) {
@@ -78,7 +83,11 @@ function CRM() {
     })
     .sort((a, b) => b.points - a.points);
 
-  const tierCounts = LOYALTY_TIERS.map((t) => ({ name: t.tier, value: rows.filter((g) => g.tier === t.tier).length }));
+  // In live mode build tier list from API, else from static LOYALTY_TIERS
+  const tierNames = isLive && liveTiersQ.data?.length
+    ? liveTiersQ.data.map((t) => t.name)
+    : LOYALTY_TIERS.map((t) => t.tier);
+  const tierCounts = tierNames.map((name) => ({ name, value: rows.filter((g) => g.tier === name).length }));
   const topGuests = [...rows].sort((a, b) => b.points - a.points).slice(0, 5);
   const totalLTV = rows.reduce((s, g) => s + (g.ltv ?? 0), 0);
   const avgStays = rows.length ? (rows.reduce((s, g) => s + g.stays, 0) / rows.length).toFixed(1) : "0";
@@ -198,45 +207,114 @@ function CRM() {
 
         {/* Loyalty Program */}
         <TabsContent value="loyalty">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-            {LOYALTY_TIERS.map((t) => {
-              const count = rows.filter((g) => g.tier === t.tier).length;
-              return (
-                <Card key={t.tier} className="p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xl">{t.icon}</span>
-                      <div>
-                        <div className="font-semibold">{t.tier}</div>
-                        <div className="text-xs text-muted-foreground">{count} guests</div>
-                      </div>
-                    </div>
-                    <Badge className={`${t.color} text-[10px]`}>{count} members</Badge>
-                  </div>
-                  <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">{t.perks}</div>
-                </Card>
-              );
-            })}
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="font-semibold">
+              {isLive ? "Live Loyalty Tiers" : "Loyalty Tiers"}
+              {isLive && liveTiersQ.isLoading && <Loader2 className="size-3.5 animate-spin inline ml-2" />}
+            </h3>
+            {isLive && (
+              <Button size="sm" variant="outline" onClick={() => setNewTierOpen(true)}>
+                <Plus className="size-3.5 mr-1" />Add Tier
+              </Button>
+            )}
           </div>
-          <Card className="p-5">
-            <h3 className="font-semibold mb-3">Top Loyalty Members by Points</h3>
-            <div className="space-y-2">
-              {topGuests.map((g, i) => {
-                const tm = tierMeta(g.tier);
-                return (
-                  <div key={g.id} className="flex items-center gap-3 p-2 rounded hover:bg-muted/30">
-                    <div className="text-muted-foreground font-medium w-5 text-sm">{i + 1}</div>
-                    <Avatar className="size-7"><AvatarFallback className="text-xs">{initials(g.name)}</AvatarFallback></Avatar>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm flex items-center gap-1">
-                        {g.name}{g.vip && <Star className="size-3 text-yellow-500 fill-yellow-500" />}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            {isLive && liveTiersQ.data && liveTiersQ.data.length > 0
+              ? liveTiersQ.data.map((t, i) => {
+                  const memberCount = loyaltyMembersQ.data?.filter((m) => m.tier_id === t.id).length ?? 0;
+                  const TIER_COLORS = [
+                    "bg-info/15 text-info border-info/30",
+                    "bg-warning/20 text-warning-foreground border-warning/40",
+                    "bg-muted text-muted-foreground",
+                    "bg-muted/50 text-muted-foreground border-muted",
+                  ];
+                  const TIER_ICONS = ["💎", "🥇", "🥈", "⚪"];
+                  const color = TIER_COLORS[i % TIER_COLORS.length];
+                  const icon = TIER_ICONS[i % TIER_ICONS.length];
+                  return (
+                    <Card key={t.id} className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">{icon}</span>
+                          <div>
+                            <div className="font-semibold">{t.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              From {t.min_points.toLocaleString()} pts · {t.multiplier}× earn rate
+                            </div>
+                          </div>
+                        </div>
+                        <Badge className={`${color} text-[10px]`}>{memberCount} members</Badge>
                       </div>
-                    </div>
-                    <Badge className={`text-[10px] border ${tm.color}`}>{tm.icon} {g.tier}</Badge>
-                    <div className="font-semibold text-sm">{g.points.toLocaleString()} pts</div>
-                  </div>
-                );
-              })}
+                      {t.benefits && Object.keys(t.benefits).length > 0 && (
+                        <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
+                          {Object.entries(t.benefits).map(([k, v]) => `${k}: ${v}`).join(" · ")}
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })
+              : LOYALTY_TIERS.map((t) => {
+                  const count = rows.filter((g) => g.tier === t.tier).length;
+                  return (
+                    <Card key={t.tier} className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">{t.icon}</span>
+                          <div>
+                            <div className="font-semibold">{t.tier}</div>
+                            <div className="text-xs text-muted-foreground">{count} guests</div>
+                          </div>
+                        </div>
+                        <Badge className={`${t.color} text-[10px]`}>{count} members</Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">{t.perks}</div>
+                    </Card>
+                  );
+                })
+            }
+          </div>
+
+          {/* Loyalty members leaderboard */}
+          <Card className="p-5">
+            <h3 className="font-semibold mb-3">
+              {isLive && loyaltyMembersQ.data ? "Loyalty Members (from API)" : "Top Guests by Points"}
+            </h3>
+            <div className="space-y-2">
+              {(isLive && loyaltyMembersQ.data
+                ? [...loyaltyMembersQ.data].sort((a, b) => b.points - a.points).slice(0, 10).map((m, i) => {
+                    const tm = tierMeta(m.tier_name ?? "Standard");
+                    return (
+                      <div key={m.id} className="flex items-center gap-3 p-2 rounded hover:bg-muted/30">
+                        <div className="text-muted-foreground font-medium w-5 text-sm">{i + 1}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm">{m.guest_name ?? m.guest_id.slice(0, 8)}</div>
+                          <div className="text-[10px] text-muted-foreground">{m.guest_email ?? ""}</div>
+                        </div>
+                        <Badge className={`text-[10px] border ${tm.color}`}>{tm.icon} {m.tier_name ?? "—"}</Badge>
+                        <div className="font-semibold text-sm">{m.points.toLocaleString()} pts</div>
+                      </div>
+                    );
+                  })
+                : topGuests.map((g, i) => {
+                    const tm = tierMeta(g.tier);
+                    return (
+                      <div key={g.id} className="flex items-center gap-3 p-2 rounded hover:bg-muted/30">
+                        <div className="text-muted-foreground font-medium w-5 text-sm">{i + 1}</div>
+                        <Avatar className="size-7"><AvatarFallback className="text-xs">{initials(g.name)}</AvatarFallback></Avatar>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm flex items-center gap-1">
+                            {g.name}{g.vip && <Star className="size-3 text-yellow-500 fill-yellow-500" />}
+                          </div>
+                        </div>
+                        <Badge className={`text-[10px] border ${tm.color}`}>{tm.icon} {g.tier}</Badge>
+                        <div className="font-semibold text-sm">{g.points.toLocaleString()} pts</div>
+                      </div>
+                    );
+                  })
+              )}
+              {isLive && loyaltyMembersQ.data?.length === 0 && (
+                <p className="text-center py-6 text-muted-foreground text-sm">No loyalty members enrolled yet.</p>
+              )}
             </div>
           </Card>
         </TabsContent>
@@ -361,6 +439,42 @@ function CRM() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Add Loyalty Tier Dialog */}
+      <Dialog open={newTierOpen} onOpenChange={setNewTierOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Add Loyalty Tier</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label className="text-xs">Tier Name</Label><Input className="h-8 mt-1" placeholder="e.g. Platinum" value={newTier.name} onChange={(e) => setNewTier({ ...newTier, name: e.target.value })} /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-xs">Min Points</Label><Input type="number" className="h-8 mt-1" value={newTier.min_points} onChange={(e) => setNewTier({ ...newTier, min_points: e.target.value })} /></div>
+              <div><Label className="text-xs">Earn Multiplier</Label><Input type="number" step="0.1" className="h-8 mt-1" value={newTier.multiplier} onChange={(e) => setNewTier({ ...newTier, multiplier: e.target.value })} /></div>
+            </div>
+            <div><Label className="text-xs">Benefits (comma-separated)</Label><Input className="h-8 mt-1" placeholder="Late check-out, Room upgrade" value={newTier.benefits} onChange={(e) => setNewTier({ ...newTier, benefits: e.target.value })} /></div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Button variant="outline" className="flex-1" onClick={() => setNewTierOpen(false)}>Cancel</Button>
+            <Button
+              className="flex-1"
+              disabled={!newTier.name || createTierM.isPending}
+              onClick={() => {
+                const benefitsObj = newTier.benefits
+                  ? Object.fromEntries(newTier.benefits.split(",").map((b, i) => [`benefit_${i + 1}`, b.trim()]))
+                  : {};
+                createTierM.mutate(
+                  { name: newTier.name, min_points: Number(newTier.min_points), multiplier: Number(newTier.multiplier), benefits: benefitsObj },
+                  {
+                    onSuccess: () => { toast.success("Tier created"); setNewTierOpen(false); setNewTier({ name: "", min_points: "0", multiplier: "1", benefits: "" }); },
+                    onError: (e: any) => toast.error(e.message ?? "Failed to create tier"),
+                  }
+                );
+              }}
+            >
+              {createTierM.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Create"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* New Campaign Dialog */}
       <Dialog open={newCampaignOpen} onOpenChange={setNewCampaignOpen}>

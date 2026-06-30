@@ -13,9 +13,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Cell,
 } from "recharts";
-import { Plus, ArrowUp, ArrowDown, Search, Package, AlertTriangle, BarChart3, RefreshCw, Download } from "lucide-react";
+import { Plus, ArrowUp, ArrowDown, Search, Package, AlertTriangle, BarChart3, RefreshCw, Download, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
+import { useAuth } from "@/lib/api/auth";
+import { useInventoryItems } from "@/lib/api/hooks";
 
 type Movement = { id: string; sku: string; name: string; type: "In" | "Out" | "Adjustment"; qty: number; reason: string; by: string; date: string };
 
@@ -34,7 +36,30 @@ export const Route = createFileRoute("/inventory")({
 });
 
 function Inventory() {
-  const { inventory, updateInventory } = useMHMS();
+  const authed = !!useAuth((s) => s.user);
+  const { inventory: demoInventory, updateInventory } = useMHMS();
+  const inventoryQ = useInventoryItems();
+
+  const isLive = authed && !!inventoryQ.data && inventoryQ.data.length > 0;
+
+  const inventory = useMemo(() => {
+    if (isLive && inventoryQ.data) {
+      return inventoryQ.data.map((i: any) => ({
+        id: i.id,
+        name: i.name,
+        sku: i.sku ?? i.id,
+        category: i.category ?? "General",
+        stock: i.quantity ?? i.stock ?? 0,
+        reorderLevel: i.reorder_level ?? i.reorderLevel ?? 10,
+        unitCost: i.unit_cost ?? i.unitCost ?? 0,
+        unit: i.unit ?? "pcs",
+        supplier: i.supplier ?? "—",
+        _live: true,
+      }));
+    }
+    return demoInventory;
+  }, [isLive, inventoryQ.data, demoInventory]);
+
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("All");
   const [movements, setMovements] = useState<Movement[]>(INITIAL_MOVEMENTS);
@@ -69,7 +94,11 @@ function Inventory() {
     if (!adjustItem || !adjustQty) return;
     const qty = Number(adjustQty);
     const delta = adjustType === "Out" ? -qty : qty;
-    updateInventory(adjustItem.id, { stock: Math.max(0, adjustItem.stock + delta) });
+    if (!(adjustItem as any)._live) {
+      updateInventory(adjustItem.id, { stock: Math.max(0, adjustItem.stock + delta) });
+    } else {
+      toast.info("Live inventory adjustment requires backend stock movement API");
+    }
     const m: Movement = {
       id: `m${Date.now()}`,
       sku: adjustItem.sku,
