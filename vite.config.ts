@@ -30,5 +30,5 @@ export default defineConfig({
     routeRules: {
       "/api/**": { proxy: "https://hmsadmin.jazverse.online/api/**" },
     },
-  },
+  } as any,
 });

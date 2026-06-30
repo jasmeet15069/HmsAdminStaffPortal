@@ -98,7 +98,7 @@ function AccountingPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Accounting" subtitle="Full-cycle financial management — invoices, POs, GRN, and journals" />
+      <PageHeader title="Accounting" description="Full-cycle financial management — invoices, POs, GRN, and journals" />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
         <Stat label="Posted Sales" value={fmtCurr(totalSales)} hint="Invoice total" />
         <Stat label="Draft POs" value={openPOs} hint="Pending approval" />

@@ -49,9 +49,16 @@ const TABLE_COLORS: Record<string, string> = {
 
 async function openInvoice(billId: string) {
   const token = getAccessToken();
-  const res = await fetch(`/api/pos/bills/${billId}/invoice`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api/pos/bills/${billId}/invoice`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) { toast.error("Invoice not available"); return; }
+  } catch {
+    toast.error("Network error loading invoice");
+    return;
+  }
   const html = await res.text();
   const w = window.open("", "_blank", "width=900,height=760");
   if (!w) { toast.error("Popup blocked — allow popups to print"); return; }
