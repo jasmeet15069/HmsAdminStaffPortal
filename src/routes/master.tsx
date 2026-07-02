@@ -49,7 +49,11 @@ export const Route = createFileRoute("/master")({
   component: MasterAdmin,
 });
 
-const blankCreate = { name: "", slug: "", plan_tier: "basic", country: "", currency: "USD", admin_email: "", admin_password: "" };
+const blankCreate = {
+  name: "", slug: "", plan_tier: "basic", country: "", currency: "USD",
+  hotel_email: "", hotel_phone: "", timezone: "UTC",
+  admin_email: "", admin_password: "",
+};
 
 function MasterAdmin() {
   const navigate = useNavigate();
@@ -109,7 +113,10 @@ function MasterAdmin() {
         plan_tier: form.plan_tier,
         country: form.country.trim() || undefined,
         currency: form.currency.trim() || undefined,
-      } as never);
+        hotel_email: form.hotel_email.trim() || undefined,
+        hotel_phone: form.hotel_phone.trim() || undefined,
+        timezone: form.timezone || undefined,
+      });
       toast.success(`Client "${form.name.trim()}" provisioned`);
       setCreateOpen(false);
       setForm(blankCreate);
@@ -171,6 +178,7 @@ function MasterAdmin() {
                 <TableHead>Rooms</TableHead>
                 <TableHead>Users</TableHead>
                 <TableHead>Database</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead>Active</TableHead>
                 <TableHead className="text-right">Modules</TableHead>
               </TableRow>
@@ -178,7 +186,7 @@ function MasterAdmin() {
             <TableBody>
               {tenants.length === 0 && !tenantsQ.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8 text-sm">
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8 text-sm">
                     No clients yet — create your first one.
                   </TableCell>
                 </TableRow>
@@ -203,7 +211,30 @@ function MasterAdmin() {
                   </TableCell>
                   <TableCell className="text-sm">{t.rooms_used}{t.rooms_max ? ` / ${t.rooms_max}` : ""}</TableCell>
                   <TableCell className="text-sm">{t.users_used}{t.users_max ? ` / ${t.users_max}` : ""}</TableCell>
-                  <TableCell className="text-xs font-mono text-muted-foreground">{t.database_name ?? "—"}</TableCell>
+                  <TableCell className="text-xs font-mono text-muted-foreground">
+                    <div className="flex flex-col gap-0.5">
+                      <span>{t.database_name ?? "—"}</span>
+                      {t.isolation_mode && (
+                        <span className="text-[10px] text-muted-foreground/60">{t.isolation_mode}</span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {t.provision_status === "active" && (
+                      <Badge variant="outline" className="text-green-600 border-green-300 text-xs">Active</Badge>
+                    )}
+                    {t.provision_status === "running" && (
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Loader2 className="size-3 animate-spin" /> Provisioning
+                      </span>
+                    )}
+                    {t.provision_status === "failed" && (
+                      <Badge variant="outline" className="text-red-600 border-red-300 text-xs">Failed</Badge>
+                    )}
+                    {(!t.provision_status || t.provision_status === "pending") && (
+                      <Badge variant="outline" className="text-muted-foreground text-xs">Pending</Badge>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Switch checked={t.is_active} onCheckedChange={(v) => toggleActive(t, v)} />
                   </TableCell>
@@ -250,10 +281,10 @@ function CreateDialog({
   const set = (k: keyof typeof blankCreate, v: string) => setForm({ ...form, [k]: v });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Building2 className="size-4" /> Provision New Client</DialogTitle>
-          <DialogDescription>Creates an isolated hotel tenant. Optionally seed its first admin login.</DialogDescription>
+          <DialogDescription>Creates an isolated hotel tenant with seeded template data. Optionally seed its first admin login.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
@@ -284,6 +315,31 @@ function CreateDialog({
               <Label>Currency</Label>
               <Input value={form.currency} onChange={(e) => set("currency", e.target.value.toUpperCase())} maxLength={3} placeholder="USD" />
             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Hotel email</Label>
+              <Input type="email" value={form.hotel_email} onChange={(e) => set("hotel_email", e.target.value)} placeholder="hotel@example.com" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Hotel phone</Label>
+              <Input value={form.hotel_phone} onChange={(e) => set("hotel_phone", e.target.value)} placeholder="+91 98765 43210" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Timezone</Label>
+            <Select value={form.timezone} onValueChange={(v) => set("timezone", v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="UTC">UTC</SelectItem>
+                <SelectItem value="Asia/Kolkata">Asia/Kolkata (IST +5:30)</SelectItem>
+                <SelectItem value="America/New_York">America/New_York (EST −5)</SelectItem>
+                <SelectItem value="America/Los_Angeles">America/Los_Angeles (PST −8)</SelectItem>
+                <SelectItem value="Asia/Dubai">Asia/Dubai (GST +4)</SelectItem>
+                <SelectItem value="Europe/London">Europe/London (GMT)</SelectItem>
+                <SelectItem value="Asia/Singapore">Asia/Singapore (+8)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="pt-1 border-t mt-1">
             <p className="text-xs text-muted-foreground mt-2 mb-2">Initial admin login (optional)</p>

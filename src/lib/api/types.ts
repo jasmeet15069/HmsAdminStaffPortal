@@ -6,6 +6,7 @@ export interface SessionUser {
   id: string;
   hotel_id?: string;
   email: string;
+  roles: string[];
   platform_admin: boolean;
   user_metadata: Record<string, unknown>;
 }
@@ -361,6 +362,9 @@ export interface PlatformTenant {
   properties_used: number;
   properties_max?: number | null;
   database_name?: string | null;
+  provision_status: "pending" | "running" | "active" | "failed";
+  isolation_mode: "shared" | "dedicated" | "provisioned";
+  vercel_domain?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -371,6 +375,9 @@ export interface CreateTenantBody {
   plan_tier: string;
   country?: string;
   currency?: string;
+  hotel_email?: string;
+  hotel_phone?: string;
+  timezone?: string;
 }
 
 export interface PosOrderItemApi {
@@ -625,6 +632,34 @@ export interface NightAuditTaxItem {
   base_amount: number;
   tax_rate: number;
   tax_amount: number;
+}
+
+// ---------------------------------------------------------------------------
+// Menu
+// ---------------------------------------------------------------------------
+
+export interface MenuCategory {
+  id: string;
+  name: string;
+  description: string | null;
+  display_order: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface LiveMenuItem {
+  id: string;
+  category_id: string | null;
+  name: string;
+  description: string | null;
+  price: number;
+  image_url: string | null;
+  is_available: boolean;
+  preparation_time: number;
+  created_at: string;
+  updated_at: string;
+  menu_categories: { name: string } | null;
+  menu_item_customizations: { id: string; name: string; price: number; is_available: boolean }[];
 }
 
 // ---------------------------------------------------------------------------
