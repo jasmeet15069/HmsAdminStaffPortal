@@ -1,10 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { fmtINR } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
 import {
   useRooms, useCreateRoom, useUpdateRoom, useDeleteRoom, useUpdateRoomStatus,
 } from "@/lib/api/hooks";
+import { apiFetch } from "@/lib/api/client";
+import { downloadCSV, parseCSV } from "@/lib/csv";
 import type { Room, RoomStatus, CreateRoomInput } from "@/lib/api/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,8 +17,11 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { BedDouble, Plus, Pencil, Trash2, Loader2, Search } from "lucide-react";
-import { useState, useMemo } from "react";
+import {
+  BedDouble, Plus, Pencil, Trash2, Loader2, Search,
+  Upload, Download, FileSpreadsheet, UploadCloud, CheckCircle2, X,
+} from "lucide-react";
+import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/rooms")({
@@ -25,6 +31,19 @@ export const Route = createFileRoute("/rooms")({
 
 const STATUSES: RoomStatus[] = ["available", "occupied", "cleaning", "maintenance"];
 const ROOM_TYPES = ["Standard Single", "Standard Double", "Deluxe", "Suite", "Executive", "Family"];
+
+// Blueprint for the bulk-upload spreadsheet template. The header order here is
+// exactly what POST /api/bulk/rooms accepts; the example rows are a guide the
+// user overwrites with their own data.
+const TEMPLATE_ROWS: Record<string, string | number>[] = [
+  { room_number: "101", room_type: "Standard Single", floor: 1, capacity: 1, price_per_night: 3500, status: "available" },
+  { room_number: "102", room_type: "Deluxe", floor: 2, capacity: 2, price_per_night: 8000, status: "available" },
+];
+
+type BulkResult = {
+  entity: string; received: number; inserted: number; failed: number;
+  errors: { row: number; error: string }[];
+};
 
 const statusMeta: Record<RoomStatus, { label: string; color: string }> = {
   available: { label: "Available", color: "bg-success/15 text-success border-success/30" },
@@ -56,6 +75,45 @@ function RoomManagement() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<FormState>(BLANK);
   const [delTarget, setDelTarget] = useState<Room | null>(null);
+
+  // Bulk upload
+  const qc = useQueryClient();
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkRows, setBulkRows] = useState<Record<string, string>[]>([]);
+  const [bulkFileName, setBulkFileName] = useState("");
+  const [dragActive, setDragActive] = useState(false);
+  const [bulkResult, setBulkResult] = useState<BulkResult | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const bulkM = useMutation({
+    mutationFn: (rows: Record<string, string>[]) =>
+      apiFetch<BulkResult>("/api/bulk/rooms", { method: "POST", body: { rows } }),
+    onSuccess: (r) => {
+      setBulkResult(r);
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      if (r.inserted > 0) toast.success(`Imported ${r.inserted} of ${r.received} rooms`);
+      if (r.failed > 0) toast.error(`${r.failed} row(s) failed — see details`);
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Bulk upload failed"),
+  });
+
+  const resetBulk = () => { setBulkRows([]); setBulkFileName(""); setBulkResult(null); setDragActive(false); };
+  const openBulk = () => { resetBulk(); setBulkOpen(true); };
+  const downloadTemplate = () => { downloadCSV("rooms-template.csv", TEMPLATE_ROWS); toast.success("Template downloaded"); };
+
+  const ingestFile = async (file: File) => {
+    if (!/\.csv$/i.test(file.name)) { toast.error("Please choose a .csv file (save your Excel sheet as CSV)"); return; }
+    try {
+      const rows = parseCSV(await file.text());
+      if (rows.length === 0) { toast.error("That file has no data rows"); return; }
+      setBulkFileName(file.name);
+      setBulkRows(rows);
+      setBulkResult(null);
+    } catch {
+      toast.error("Could not read that file");
+    }
+  };
 
   const filtered = useMemo(
     () => rooms.filter((r) =>
@@ -143,6 +201,9 @@ function RoomManagement() {
             <Badge variant={authed ? "default" : "outline"} className="self-center">{authed ? "Live" : "Sign in to manage"}</Badge>
             <Button size="sm" className="gap-1.5" onClick={openAdd} disabled={!authed}>
               <Plus className="size-4" /> Add Room
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={openBulk} disabled={!authed}>
+              <Upload className="size-4" /> Bulk Upload
             </Button>
           </div>
         }
@@ -284,6 +345,105 @@ function RoomManagement() {
               {deleteM.isPending ? <Loader2 className="size-3.5 animate-spin mr-1" /> : <Trash2 className="size-3.5 mr-1" />}
               Delete
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk upload dialog */}
+      <Dialog open={bulkOpen} onOpenChange={(o) => { setBulkOpen(o); if (!o) resetBulk(); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Bulk Upload Rooms</DialogTitle></DialogHeader>
+
+          {!bulkResult ? (
+            <div className="space-y-5">
+              {/* Step 1 — download template */}
+              <div className="flex gap-3">
+                <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold">1</div>
+                <div className="flex-1">
+                  <div className="font-medium text-sm">Download the template</div>
+                  <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+                    Get the blank spreadsheet (CSV — opens in Excel or Google Sheets) with the required column headers:{" "}
+                    <span className="font-mono text-[11px]">room_number, room_type, floor, capacity, price_per_night, status</span>.
+                    Replace the example rows with your rooms, then save.
+                  </p>
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={downloadTemplate}>
+                    <Download className="size-4" /> Download Template
+                  </Button>
+                </div>
+              </div>
+
+              {/* Step 2 — upload filled file */}
+              <div className="flex gap-3">
+                <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold">2</div>
+                <div className="flex-1">
+                  <div className="font-medium text-sm">Upload your filled file</div>
+                  <p className="text-xs text-muted-foreground mt-0.5 mb-2">Drag &amp; drop your saved CSV below, or click to choose it.</p>
+
+                  <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) ingestFile(f); e.target.value = ""; }} />
+
+                  {!bulkFileName ? (
+                    <button type="button"
+                      onClick={() => fileRef.current?.click()}
+                      onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+                      onDragLeave={() => setDragActive(false)}
+                      onDrop={(e) => { e.preventDefault(); setDragActive(false); const f = e.dataTransfer.files?.[0]; if (f) ingestFile(f); }}
+                      className={`w-full rounded-lg border-2 border-dashed p-6 text-center transition ${dragActive ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/40"}`}>
+                      <UploadCloud className="size-7 mx-auto text-muted-foreground mb-1.5" />
+                      <div className="text-sm font-medium">Drop CSV here or click to browse</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">.csv files only</div>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2 rounded-lg border p-3">
+                      <FileSpreadsheet className="size-5 text-success shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">{bulkFileName}</div>
+                        <div className="text-[11px] text-muted-foreground">{bulkRows.length} room row{bulkRows.length === 1 ? "" : "s"} ready to import</div>
+                      </div>
+                      <Button size="sm" variant="ghost" className="h-7 px-2" onClick={resetBulk}><X className="size-4" /></Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Result summary */
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="size-5 text-success" />
+                <div className="text-sm font-medium">Imported {bulkResult.inserted} of {bulkResult.received} rooms</div>
+              </div>
+              {bulkResult.failed > 0 && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                  <div className="text-xs font-medium text-destructive mb-1">{bulkResult.failed} row(s) could not be imported:</div>
+                  <ul className="text-[11px] text-muted-foreground space-y-0.5 max-h-32 overflow-y-auto">
+                    {bulkResult.errors.slice(0, 20).map((er, i) => (
+                      <li key={i}>Row {er.row}: {er.error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            {!bulkResult ? (
+              <>
+                <Button variant="outline" onClick={() => { setBulkOpen(false); resetBulk(); }}>Cancel</Button>
+                <Button
+                  onClick={() => bulkM.mutate(bulkRows)}
+                  disabled={bulkRows.length === 0 || bulkM.isPending}
+                  className={bulkRows.length > 0 ? "bg-green-600 hover:bg-green-700 text-white" : ""}>
+                  {bulkM.isPending ? <Loader2 className="size-3.5 animate-spin mr-1" /> : <Upload className="size-3.5 mr-1" />}
+                  Upload{bulkRows.length > 0 ? ` ${bulkRows.length} Room${bulkRows.length === 1 ? "" : "s"}` : ""}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={resetBulk}>Upload Another</Button>
+                <Button onClick={() => { setBulkOpen(false); resetBulk(); }}>Done</Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
