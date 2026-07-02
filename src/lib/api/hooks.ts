@@ -23,6 +23,8 @@ import type {
   BillingInvoice,
   BillingTransaction,
   CloseDayResponse,
+  LiveMenuItem,
+  MenuCategory,
   ConsolidatedReport,
   DashboardData,
   DashboardStats,
@@ -1068,5 +1070,168 @@ export function useCreateGuest() {
       id_number?: string;
     }) => apiFetch<GuestDetail>("/api/crm/guests", { method: "POST", body }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["crm", "guests"] }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Menu items (compat-handler backed — /api/tables/menu_items)
+// ---------------------------------------------------------------------------
+
+export function useMenuCategories() {
+  return useQuery({
+    queryKey: ["menu", "categories"] as const,
+    queryFn: () =>
+      apiFetch<MenuCategory[] | null>("/api/tables/menu_categories").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useMenuItems() {
+  return useQuery({
+    queryKey: ["menu", "items"] as const,
+    queryFn: () =>
+      apiFetch<LiveMenuItem[] | null>("/api/tables/menu_items").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+
+export function useCreateMenuItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      name: string;
+      price: number;
+      category_id?: string | null;
+      description?: string | null;
+      is_available?: boolean;
+      preparation_time?: number;
+    }) =>
+      apiFetch<LiveMenuItem>("/api/tables/menu_items", {
+        method: "POST",
+        body: { values: body, single: true },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["menu", "items"] }),
+  });
+}
+
+export function useUpdateMenuItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: Partial<{
+        name: string;
+        price: number;
+        category_id: string | null;
+        description: string | null;
+        is_available: boolean;
+        preparation_time: number;
+      }>;
+    }) =>
+      apiFetch<LiveMenuItem[]>("/api/tables/menu_items", {
+        method: "PATCH",
+        body: { values: patch, filters: [{ column: "id", operator: "eq", value: id }] },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["menu", "items"] }),
+  });
+}
+
+export function useDeleteMenuItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<unknown>("/api/tables/menu_items", {
+        method: "DELETE",
+        body: { filters: [{ column: "id", operator: "eq", value: id }] },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["menu", "items"] }),
+  });
+}
+
+export function useCreateMenuCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; description?: string; display_order?: number }) =>
+      apiFetch<MenuCategory[]>("/api/tables/menu_categories", {
+        method: "POST",
+        body: { values: body },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["menu", "categories"] }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Inventory mutations (read hook already exists as useInventoryItems)
+// ---------------------------------------------------------------------------
+
+export function useCreateInventoryItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      name: string;
+      unit: string;
+      current_stock?: number;
+      min_stock?: number;
+      cost_per_unit?: number | null;
+      is_perishable?: boolean;
+      expiry_date?: string | null;
+      supplier?: string | null;
+    }) =>
+      apiFetch<InventoryItem[]>("/api/tables/inventory_items", {
+        method: "POST",
+        body: { values: body },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory", "items"] }),
+  });
+}
+
+export function useUpdateInventoryItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: Partial<{
+        name: string;
+        unit: string;
+        current_stock: number;
+        min_stock: number;
+        cost_per_unit: number | null;
+        is_perishable: boolean;
+        expiry_date: string | null;
+        supplier: string | null;
+      }>;
+    }) =>
+      apiFetch<InventoryItem[]>("/api/tables/inventory_items", {
+        method: "PATCH",
+        body: { values: patch, filters: [{ column: "id", operator: "eq", value: id }] },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory", "items"] }),
+  });
+}
+
+export function useDeleteInventoryItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<unknown>("/api/tables/inventory_items", {
+        method: "DELETE",
+        body: { filters: [{ column: "id", operator: "eq", value: id }] },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory", "items"] }),
+  });
+}
+
+export function useHotelBranding() {
+  return useQuery({
+    queryKey: ["hotel", "branding"],
+    queryFn: () => apiFetch<{ hotel_name: string; logo_url?: string; primary_color?: string }>("/api/hotel/branding"),
+    enabled: isAuthenticated(),
+    staleTime: 5 * 60_000,
   });
 }

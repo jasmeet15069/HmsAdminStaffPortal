@@ -34,7 +34,7 @@ import {
 import { useEffect, useState } from "react";
 import { useMHMS } from "@/lib/mhms-store";
 import { useAuth, isAuthenticated } from "@/lib/api/auth";
-import { useTenantModules } from "@/lib/api/hooks";
+import { useTenantModules, useHotelBranding } from "@/lib/api/hooks";
 import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -160,6 +160,9 @@ export default function AppShell() {
   const user = useAuth((s) => s.user);
   const signOut = useAuth((s) => s.signOut);
 
+  const brandingQ = useHotelBranding();
+  const hotelName = brandingQ.data?.hotel_name;
+
   // Per-tenant module flags. Default-on while loading/offline so we never flash
   // an empty sidebar or lock the user out before the flags arrive.
   const modulesQ = useTenantModules();
@@ -229,12 +232,12 @@ export default function AppShell() {
     <div className="min-h-screen flex bg-background">
       <aside className="w-[260px] shrink-0 bg-sidebar text-sidebar-foreground flex flex-col fixed inset-y-0 left-0">
         <div className="h-16 px-5 flex items-center gap-2 border-b border-sidebar-border">
-          <div className="size-8 rounded-md bg-sidebar-primary text-sidebar-primary-foreground grid place-items-center font-bold">
-            M
+          <div className="size-8 rounded-md bg-sidebar-primary text-sidebar-primary-foreground grid place-items-center font-bold text-xs">
+            {hotelName ? hotelName.charAt(0).toUpperCase() : "H"}
           </div>
-          <div>
-            <div className="font-display font-semibold leading-tight">MHMS</div>
-            <div className="text-[11px] text-sidebar-foreground/60">Hotel Suite</div>
+          <div className="min-w-0">
+            <div className="font-display font-semibold leading-tight truncate max-w-[160px]">{hotelName ?? "Hotel Suite"}</div>
+            <div className="text-[11px] text-sidebar-foreground/60">Hotel Management</div>
           </div>
         </div>
         <nav className="sidebar-scroll flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
