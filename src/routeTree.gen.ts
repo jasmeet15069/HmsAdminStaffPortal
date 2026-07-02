@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as SuperadminRouteImport } from './routes/superadmin'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as RoomsRouteImport } from './routes/rooms'
 import { Route as RevenueRouteImport } from './routes/revenue'
 import { Route as RestaurantRouteImport } from './routes/restaurant'
 import { Route as ReservationsRouteImport } from './routes/reservations'
@@ -52,6 +53,11 @@ const SuperadminRoute = SuperadminRouteImport.update({
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RoomsRoute = RoomsRouteImport.update({
+  id: '/rooms',
+  path: '/rooms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RevenueRoute = RevenueRouteImport.update({
@@ -209,6 +215,7 @@ export interface FileRoutesByFullPath {
   '/reservations': typeof ReservationsRouteWithChildren
   '/restaurant': typeof RestaurantRoute
   '/revenue': typeof RevenueRoute
+  '/rooms': typeof RoomsRoute
   '/setup': typeof SetupRoute
   '/superadmin': typeof SuperadminRoute
   '/users': typeof UsersRoute
@@ -240,6 +247,7 @@ export interface FileRoutesByTo {
   '/reservations': typeof ReservationsRouteWithChildren
   '/restaurant': typeof RestaurantRoute
   '/revenue': typeof RevenueRoute
+  '/rooms': typeof RoomsRoute
   '/setup': typeof SetupRoute
   '/superadmin': typeof SuperadminRoute
   '/users': typeof UsersRoute
@@ -272,6 +280,7 @@ export interface FileRoutesById {
   '/reservations': typeof ReservationsRouteWithChildren
   '/restaurant': typeof RestaurantRoute
   '/revenue': typeof RevenueRoute
+  '/rooms': typeof RoomsRoute
   '/setup': typeof SetupRoute
   '/superadmin': typeof SuperadminRoute
   '/users': typeof UsersRoute
@@ -305,6 +314,7 @@ export interface FileRouteTypes {
     | '/reservations'
     | '/restaurant'
     | '/revenue'
+    | '/rooms'
     | '/setup'
     | '/superadmin'
     | '/users'
@@ -336,6 +346,7 @@ export interface FileRouteTypes {
     | '/reservations'
     | '/restaurant'
     | '/revenue'
+    | '/rooms'
     | '/setup'
     | '/superadmin'
     | '/users'
@@ -367,6 +378,7 @@ export interface FileRouteTypes {
     | '/reservations'
     | '/restaurant'
     | '/revenue'
+    | '/rooms'
     | '/setup'
     | '/superadmin'
     | '/users'
@@ -399,6 +411,7 @@ export interface RootRouteChildren {
   ReservationsRoute: typeof ReservationsRouteWithChildren
   RestaurantRoute: typeof RestaurantRoute
   RevenueRoute: typeof RevenueRoute
+  RoomsRoute: typeof RoomsRoute
   SetupRoute: typeof SetupRoute
   SuperadminRoute: typeof SuperadminRoute
   UsersRoute: typeof UsersRoute
@@ -426,6 +439,13 @@ declare module '@tanstack/react-router' {
       path: '/setup'
       fullPath: '/setup'
       preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rooms': {
+      id: '/rooms'
+      path: '/rooms'
+      fullPath: '/rooms'
+      preLoaderRoute: typeof RoomsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/revenue': {
@@ -651,6 +671,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReservationsRoute: ReservationsRouteWithChildren,
   RestaurantRoute: RestaurantRoute,
   RevenueRoute: RevenueRoute,
+  RoomsRoute: RoomsRoute,
   SetupRoute: SetupRoute,
   SuperadminRoute: SuperadminRoute,
   UsersRoute: UsersRoute,

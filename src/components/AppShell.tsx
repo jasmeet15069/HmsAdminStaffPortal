@@ -30,6 +30,7 @@ import {
   Landmark,
   Cog,
   Calculator,
+  BedDouble,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMHMS } from "@/lib/mhms-store";
@@ -127,6 +128,7 @@ const nav: NavEntry[] = [
     icon: Cog,
     children: [
       { to: "/properties", label: "Properties", icon: Building2, module: "properties" },
+      { to: "/rooms", label: "Room Management", icon: BedDouble, module: "rooms" },
       { to: "/setup", label: "Setup Wizard", icon: Settings, module: "admin" },
       { to: "/users", label: "Users & Roles", icon: ShieldCheck, module: "users" },
       { to: "/admin", label: "System Admin", icon: Settings, module: "admin" },
