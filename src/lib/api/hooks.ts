@@ -49,7 +49,6 @@ import type {
   ReservationDetail,
   Room,
   RoomStatus,
-  Session,
   TenantModulesResponse,
   Vendor,
 } from "./types";
@@ -374,25 +373,43 @@ export function useApiUsers() {
 export function useCreateApiUser() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: {
-      email: string;
-      password: string;
-      full_name: string;
-      role: string;
-    }) => {
-      const { role, ...signUpData } = input;
-      const result = await apiFetch<Session>("/api/auth/sign-up", {
-        method: "POST",
-        body: signUpData,
-        auth: false,
-      });
-      const userId = result?.user?.id;
-      if (userId && role) {
-        await apiFetch(`/api/users/${userId}/roles`, { method: "POST", body: { role } });
-      }
-      return result;
-    },
+    mutationFn: (input: { email: string; password: string; full_name: string; role: string }) =>
+      apiFetch("/api/users", { method: "POST", body: input }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+export function useUpdateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, data }: { userId: string; data: { full_name?: string; phone?: string } }) =>
+      apiFetch(`/api/users/${userId}`, { method: "PATCH", body: data }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+export function useSetUserRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: string }) =>
+      apiFetch(`/api/users/${userId}/role`, { method: "PUT", body: { role } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+export function useDeleteUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) =>
+      apiFetch(`/api/users/${userId}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+export function useResetUserPassword() {
+  return useMutation({
+    mutationFn: ({ userId, password }: { userId: string; password: string }) =>
+      apiFetch(`/api/users/${userId}/password`, { method: "POST", body: { password } }),
   });
 }
 
@@ -664,6 +681,15 @@ export function useCreateHousekeepingTask() {
       assigned_to?: string;
     }) => apiFetch("/api/housekeeping/tasks", { method: "POST", body }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["housekeeping"] }),
+  });
+}
+
+export function useCreateLostItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { item_name: string; description?: string; found_by?: string; room_id?: string }) =>
+      apiFetch("/api/housekeeping/lost-items", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["housekeeping", "lost-items"] }),
   });
 }
 

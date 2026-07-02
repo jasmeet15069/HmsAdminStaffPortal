@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, roomStatusMeta, type RoomStatus } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useRooms, useHousekeepingTasks, useUpdateHousekeepingTask, useUpdateRoomStatus, useCreateHousekeepingTask, useLostItems, useUpdateLostItem } from "@/lib/api/hooks";
+import { useRooms, useHousekeepingTasks, useUpdateHousekeepingTask, useUpdateRoomStatus, useCreateHousekeepingTask, useLostItems, useCreateLostItem, useUpdateLostItem } from "@/lib/api/hooks";
 import type { RoomStatus as ApiRoomStatus } from "@/lib/api/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,6 +53,7 @@ function Housekeeping() {
   const updateTaskM = useUpdateHousekeepingTask();
   const createTaskM = useCreateHousekeepingTask();
   const lostItemsQ = useLostItems();
+  const createLostM = useCreateLostItem();
   const updateLostM = useUpdateLostItem();
   const { rooms, tasks, setRoomStatus, updateTask, addTask } = useMHMS();
 
@@ -519,14 +520,16 @@ function Housekeeping() {
             <Button disabled={!newLf.item || !newLf.location}
               onClick={async () => {
                 if (isLive) {
-                  try {
-                    await updateLostM.mutateAsync({ id: "new", patch: { item_description: newLf.item, found_location: newLf.location, found_by: newLf.foundBy || "Staff", status: "logged" } });
-                    toast.success("Item logged"); setLfOpen(false); setNewLf({ item: "", location: "", foundBy: "" });
-                  } catch {
-                    // fallback to local for now (POST /api/housekeeping/lost-items)
-                    setLostFound((p) => [...p, { id: `lf${Date.now()}`, date: new Date().toISOString().slice(0, 10), item: newLf.item, location: newLf.location, foundBy: newLf.foundBy || "Staff", status: "Logged", claimant: "" }]);
-                    toast.success("Item logged (local)"); setLfOpen(false); setNewLf({ item: "", location: "", foundBy: "" });
-                  }
+                  createLostM.mutate(
+                    { item_name: newLf.item, description: newLf.location || undefined, found_by: newLf.foundBy || undefined },
+                    {
+                      onSuccess: () => { toast.success("Item logged"); setLfOpen(false); setNewLf({ item: "", location: "", foundBy: "" }); },
+                      onError: () => {
+                        setLostFound((p) => [...p, { id: `lf${Date.now()}`, date: new Date().toISOString().slice(0, 10), item: newLf.item, location: newLf.location, foundBy: newLf.foundBy || "Staff", status: "Logged", claimant: "" }]);
+                        toast.success("Item logged (local)"); setLfOpen(false); setNewLf({ item: "", location: "", foundBy: "" });
+                      },
+                    }
+                  );
                 } else {
                   setLostFound((p) => [...p, { id: `lf${Date.now()}`, date: new Date().toISOString().slice(0, 10), item: newLf.item, location: newLf.location, foundBy: newLf.foundBy || "Staff", status: "Logged", claimant: "" }]);
                   toast.success("Item logged"); setLfOpen(false); setNewLf({ item: "", location: "", foundBy: "" });
@@ -551,7 +554,7 @@ function Housekeeping() {
               onClick={() => {
                 if (isLive && claimOpen) {
                   updateLostM.mutate(
-                    { id: claimOpen, patch: { status: "claimed", claimant_name: claimantName } },
+                    { id: claimOpen, patch: { status: "claimed" } },
                     {
                       onSuccess: () => { toast.success("Item marked as claimed"); setClaimOpen(null); },
                       onError: (e: any) => toast.error(e.message ?? "Update failed"),
