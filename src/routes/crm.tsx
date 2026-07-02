@@ -277,7 +277,7 @@ function CRM() {
           {/* Loyalty members leaderboard */}
           <Card className="p-5">
             <h3 className="font-semibold mb-3">
-              {isLive && loyaltyMembersQ.data ? "Loyalty Members (from API)" : "Top Guests by Points"}
+              {isLive && loyaltyMembersQ.data ? "Loyalty Members" : "Top Guests by Points"}
             </h3>
             <div className="space-y-2">
               {(isLive && loyaltyMembersQ.data

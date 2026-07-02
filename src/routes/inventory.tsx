@@ -17,7 +17,7 @@ import { Plus, ArrowUp, ArrowDown, Search, Package, AlertTriangle, BarChart3, Re
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/api/auth";
-import { useInventoryItems } from "@/lib/api/hooks";
+import { useInventoryItems, useUpdateInventoryItem, useCreateInventoryItem, useDeleteInventoryItem } from "@/lib/api/hooks";
 
 type Movement = { id: string; sku: string; name: string; type: "In" | "Out" | "Adjustment"; qty: number; reason: string; by: string; date: string };
 
@@ -39,6 +39,9 @@ function Inventory() {
   const authed = !!useAuth((s) => s.user);
   const { inventory: demoInventory, updateInventory } = useMHMS();
   const inventoryQ = useInventoryItems();
+  const updateItemM = useUpdateInventoryItem();
+  const createItemM = useCreateInventoryItem();
+  const deleteItemM = useDeleteInventoryItem();
 
   const isLive = authed && !!inventoryQ.data && inventoryQ.data.length > 0;
 
@@ -93,27 +96,37 @@ function Inventory() {
   const handleAdjust = () => {
     if (!adjustItem || !adjustQty) return;
     const qty = Number(adjustQty);
+    if (isNaN(qty) || qty === 0) { toast.error("Enter a valid quantity"); return; }
     const delta = adjustType === "Out" ? -qty : qty;
-    if (!(adjustItem as any)._live) {
-      updateInventory(adjustItem.id, { stock: Math.max(0, adjustItem.stock + delta) });
-    } else {
-      toast.info("Live inventory adjustment requires backend stock movement API");
-    }
-    const m: Movement = {
-      id: `m${Date.now()}`,
-      sku: adjustItem.sku,
-      name: adjustItem.name,
-      type: adjustType,
-      qty: delta,
-      reason: adjustReason || "Manual adjustment",
-      by: "Current User",
-      date: new Date().toISOString().slice(0, 10),
+    const newStock = Math.max(0, adjustItem.stock + delta);
+
+    const applyLocally = () => {
+      const m: Movement = {
+        id: `m${Date.now()}`,
+        sku: adjustItem.sku,
+        name: adjustItem.name,
+        type: adjustType,
+        qty: delta,
+        reason: adjustReason || "Manual adjustment",
+        by: "Current User",
+        date: new Date().toISOString().slice(0, 10),
+      };
+      setMovements((prev) => [m, ...prev]);
+      toast.success(`Stock ${adjustType === "In" ? "added" : adjustType === "Out" ? "removed" : "adjusted"}: ${adjustItem.name}`);
+      setAdjustOpen(false);
+      setAdjustQty("");
+      setAdjustReason("");
     };
-    setMovements([m, ...movements]);
-    toast.success(`Stock ${adjustType === "In" ? "added" : adjustType === "Out" ? "removed" : "adjusted"}: ${adjustItem.name}`);
-    setAdjustOpen(false);
-    setAdjustQty("");
-    setAdjustReason("");
+
+    if ((adjustItem as any)._live) {
+      updateItemM.mutate(
+        { id: adjustItem.id, patch: { current_stock: newStock } },
+        { onSuccess: applyLocally, onError: (e: any) => toast.error(e.message ?? "Update failed") },
+      );
+    } else {
+      updateInventory(adjustItem.id, { stock: newStock });
+      applyLocally();
+    }
   };
 
   return (

@@ -3,6 +3,8 @@ import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
 import type { Outlet, MenuItem } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
+import { useMenuItems, useMenuCategories, useCreateMenuItem, useUpdateMenuItem, useDeleteMenuItem, useCreateMenuCategory } from "@/lib/api/hooks";
+import type { LiveMenuItem, MenuCategory } from "@/lib/api/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import {
   UtensilsCrossed, Wine, BedDouble, Sparkles,
-  Plus, Pencil, Trash2, Search, Lock, ShieldAlert,
+  Plus, Pencil, Trash2, Search, Lock, ShieldAlert, Loader2,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
@@ -37,73 +39,156 @@ const EDIT_ROLES = ["Admin", "Manager", "F&B", "Restaurant Manager", "Front Desk
 const BLANK_ITEM = { outlet: "Restaurant" as Outlet, name: "", price: "", cat: "", desc: "", active: true };
 
 function MenuManagement() {
-  const { menuItems, addMenuItem, updateMenuItem, removeMenuItem, users } = useMHMS();
+  const { menuItems: demoItems, addMenuItem, updateMenuItem: updateDemoItem, removeMenuItem, users } = useMHMS();
   const authUser = useAuth((s) => s.user);
+  const authed = !!authUser;
+
+  // Live API hooks
+  const liveItemsQ = useMenuItems();
+  const liveCatsQ = useMenuCategories();
+  const createM = useCreateMenuItem();
+  const updateM = useUpdateMenuItem();
+  const deleteM = useDeleteMenuItem();
+  const createCatM = useCreateMenuCategory();
+
+  const isLive = authed && !!liveItemsQ.data;
 
   // Resolve current user role from store
   const currentRole = useMemo(
     () => users.find((u) => u.email === authUser?.email)?.role ?? "Guest",
     [users, authUser],
   );
-  const canEdit = EDIT_ROLES.includes(currentRole) || !!authUser; // live auth = allow
+  const canEdit = EDIT_ROLES.includes(currentRole) || authed;
 
   // UI state
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("All");
   const [addOpen, setAddOpen] = useState(false);
-  const [editItem, setEditItem] = useState<MenuItem | null>(null);
+  const [editItem, setEditItem] = useState<MenuItem | LiveMenuItem | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [form, setForm] = useState(BLANK_ITEM);
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatOpen, setNewCatOpen] = useState(false);
+
+  // Unified item list
+  const menuItems = useMemo(() => {
+    if (isLive && liveItemsQ.data) {
+      return liveItemsQ.data.map((li) => ({
+        id: li.id,
+        name: li.name,
+        price: li.price,
+        cat: li.menu_categories?.name ?? "Uncategorised",
+        outlet: "Restaurant" as Outlet, // live items use category grouping, not outlet
+        desc: li.description ?? undefined,
+        active: li.is_available,
+        _live: true as const,
+        _categoryId: li.category_id,
+      }));
+    }
+    return demoItems;
+  }, [isLive, liveItemsQ.data, demoItems]);
+
+  const liveCategories: MenuCategory[] = useMemo(
+    () => (isLive && liveCatsQ.data ? liveCatsQ.data.filter((c) => c.is_active) : []),
+    [isLive, liveCatsQ.data],
+  );
 
   const total = menuItems.length;
   const active = menuItems.filter((m) => m.active).length;
 
-  const itemsForOutlet = (outlet: Outlet) =>
+  // In live mode group by category name; in demo mode group by outlet
+  const groupKeys: string[] = useMemo(() => {
+    if (isLive) {
+      const names = Array.from(new Set(menuItems.map((m) => m.cat)));
+      return names.length > 0 ? names : ["All Items"];
+    }
+    return OUTLETS.map((o) => o.key);
+  }, [isLive, menuItems]);
+
+  const itemsForGroup = (group: string) =>
     menuItems.filter((m) => {
-      const matchOutlet = m.outlet === outlet;
+      const matchGroup = isLive ? m.cat === group : m.outlet === group;
       const matchSearch = !search || m.name.toLowerCase().includes(search.toLowerCase()) || m.cat.toLowerCase().includes(search.toLowerCase());
       const matchCat = catFilter === "All" || m.cat === catFilter;
-      return matchOutlet && matchSearch && matchCat;
+      return matchGroup && matchSearch && matchCat;
     });
 
-  const allCats = (outlet: Outlet) => ["All", ...Array.from(new Set(menuItems.filter((m) => m.outlet === outlet).map((m) => m.cat)))];
+  const allCats = (group: string) => ["All", ...Array.from(new Set(menuItems.filter((m) => isLive ? m.cat === group : m.outlet === group).map((m) => m.cat)))];
 
-  const openAdd = (outlet: Outlet) => {
-    setForm({ ...BLANK_ITEM, outlet });
+  const openAdd = (group: string) => {
+    const outlet = isLive ? "Restaurant" : group as Outlet;
+    const cat = isLive ? group : "";
+    setForm({ ...BLANK_ITEM, outlet, cat });
     setAddOpen(true);
   };
 
-  const openEdit = (item: MenuItem) => {
+  const openEdit = (item: (typeof menuItems)[0]) => {
     setForm({ outlet: item.outlet, name: item.name, price: String(item.price), cat: item.cat, desc: item.desc ?? "", active: item.active });
     setEditItem(item);
   };
 
+  const isPending = createM.isPending || updateM.isPending || deleteM.isPending;
+
   const saveItem = () => {
-    if (!form.name.trim() || !form.price || !form.cat.trim()) {
-      toast.error("Name, price and category are required");
+    if (!form.name.trim() || !form.price) {
+      toast.error("Name and price are required");
       return;
     }
     const price = Number(form.price);
     if (isNaN(price) || price <= 0) { toast.error("Enter a valid price"); return; }
 
-    if (editItem) {
-      updateMenuItem(editItem.id, { name: form.name.trim(), price, cat: form.cat.trim(), desc: form.desc.trim() || undefined, outlet: form.outlet, active: form.active });
-      toast.success(`"${form.name}" updated`);
-      setEditItem(null);
+    if (isLive) {
+      const categoryId = liveCategories.find((c) => c.name === form.cat)?.id ?? null;
+      if (editItem && "_live" in editItem) {
+        updateM.mutate(
+          { id: editItem.id, patch: { name: form.name.trim(), price, category_id: categoryId, description: form.desc.trim() || null, is_available: form.active } },
+          { onSuccess: () => { toast.success(`"${form.name}" updated`); setEditItem(null); setForm(BLANK_ITEM); }, onError: (e: any) => toast.error(e.message ?? "Update failed") },
+        );
+      } else {
+        createM.mutate(
+          { name: form.name.trim(), price, category_id: categoryId, description: form.desc.trim() || null, is_available: form.active },
+          { onSuccess: () => { toast.success(`"${form.name}" added`); setAddOpen(false); setForm(BLANK_ITEM); }, onError: (e: any) => toast.error(e.message ?? "Create failed") },
+        );
+      }
     } else {
-      addMenuItem({ name: form.name.trim(), price, cat: form.cat.trim(), desc: form.desc.trim() || undefined, outlet: form.outlet, active: form.active });
-      toast.success(`"${form.name}" added to ${form.outlet}`);
-      setAddOpen(false);
+      if (editItem) {
+        updateDemoItem(editItem.id, { name: form.name.trim(), price, cat: form.cat.trim(), desc: form.desc.trim() || undefined, outlet: form.outlet, active: form.active });
+        toast.success(`"${form.name}" updated`);
+        setEditItem(null);
+      } else {
+        addMenuItem({ name: form.name.trim(), price, cat: form.cat.trim(), desc: form.desc.trim() || undefined, outlet: form.outlet, active: form.active });
+        toast.success(`"${form.name}" added to ${form.outlet}`);
+        setAddOpen(false);
+      }
+      setForm(BLANK_ITEM);
     }
-    setForm(BLANK_ITEM);
   };
 
   const confirmDelete = () => {
     if (!deleteId) return;
     const item = menuItems.find((m) => m.id === deleteId);
-    removeMenuItem(deleteId);
-    toast.success(`"${item?.name}" removed`);
-    setDeleteId(null);
+    if (isLive) {
+      deleteM.mutate(deleteId, {
+        onSuccess: () => { toast.success(`"${item?.name}" removed`); setDeleteId(null); },
+        onError: (e: any) => toast.error(e.message ?? "Delete failed"),
+      });
+    } else {
+      removeMenuItem(deleteId);
+      toast.success(`"${item?.name}" removed`);
+      setDeleteId(null);
+    }
+  };
+
+  const toggleAvailable = (item: (typeof menuItems)[0]) => {
+    if (isLive && "_live" in item) {
+      updateM.mutate(
+        { id: item.id, patch: { is_available: !item.active } },
+        { onSuccess: () => toast.success(`${item.name} ${!item.active ? "shown in" : "hidden from"} POS`) },
+      );
+    } else {
+      updateDemoItem(item.id, { active: !item.active });
+      toast.success(`${item.name} ${!item.active ? "shown in" : "hidden from"} POS`);
+    }
   };
 
   // Permission block
@@ -145,29 +230,38 @@ function MenuManagement() {
         <Stat label="Total Items" value={total} />
         <Stat label="Active in POS" value={active} tone="success" />
         <Stat label="Inactive / Hidden" value={total - active} tone="warning" />
-        <Stat label="Outlets" value={4} hint="Restaurant, Bar, Room Service, Spa" />
+        <Stat label={isLive ? "Categories" : "Outlets"} value={isLive ? liveCategories.length : 4} hint={isLive ? "Live from DB" : "Restaurant, Bar, Room Service, Spa"} />
       </div>
 
-      <Tabs defaultValue="Restaurant">
-        <TabsList className="mb-4">
-          {OUTLETS.map((o) => {
-            const count = menuItems.filter((m) => m.outlet === o.key && m.active).length;
+      {isLive && (
+        <div className="flex items-center gap-2 mb-4">
+          <Badge variant="default" className="text-xs">Live</Badge>
+          <Button size="sm" variant="outline" className="gap-1.5 h-7 text-xs" onClick={() => setNewCatOpen(true)}>
+            <Plus className="size-3" />New Category
+          </Button>
+        </div>
+      )}
+
+      <Tabs defaultValue={groupKeys[0] ?? "Restaurant"}>
+        <TabsList className="mb-4 flex-wrap h-auto">
+          {groupKeys.map((key) => {
+            const count = menuItems.filter((m) => (isLive ? m.cat === key : m.outlet === key) && m.active).length;
+            const outlet = OUTLETS.find((o) => o.key === key);
             return (
-              <TabsTrigger key={o.key} value={o.key} className="gap-1.5">
-                {o.icon} {o.label}
+              <TabsTrigger key={key} value={key} className="gap-1.5">
+                {outlet?.icon ?? <UtensilsCrossed className="size-3.5" />} {key}
                 <Badge variant="secondary" className="ml-1 text-[10px]">{count}</Badge>
               </TabsTrigger>
             );
           })}
         </TabsList>
 
-        {OUTLETS.map((o) => {
-          const cats = allCats(o.key);
-          const items = itemsForOutlet(o.key);
+        {groupKeys.map((group) => {
+          const cats = allCats(group);
+          const items = itemsForGroup(group);
           return (
-            <TabsContent key={o.key} value={o.key}>
+            <TabsContent key={group} value={group}>
               <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-                {/* Category filter */}
                 <div className="flex gap-1.5 flex-wrap">
                   {cats.map((c) => (
                     <button key={c} onClick={() => setCatFilter(c)}
@@ -176,14 +270,14 @@ function MenuManagement() {
                     </button>
                   ))}
                 </div>
-                <Button size="sm" className="gap-1.5 shrink-0" onClick={() => openAdd(o.key)}>
+                <Button size="sm" className="gap-1.5 shrink-0" onClick={() => openAdd(group)} disabled={isPending}>
                   <Plus className="size-4" />Add Item
                 </Button>
               </div>
 
               {items.length === 0 ? (
                 <Card className="p-12 text-center text-muted-foreground">
-                  No items found. <button className="text-primary hover:underline" onClick={() => openAdd(o.key)}>Add the first one →</button>
+                  No items found. <button className="text-primary hover:underline" onClick={() => openAdd(group)}>Add the first one →</button>
                 </Card>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
@@ -205,7 +299,7 @@ function MenuManagement() {
                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                           <Switch
                             checked={item.active}
-                            onCheckedChange={(v) => { updateMenuItem(item.id, { active: v }); toast.success(`${item.name} ${v ? "shown in" : "hidden from"} POS`); }}
+                            onCheckedChange={() => toggleAvailable(item)}
                             className="scale-75"
                           />
                           <span>{item.active ? "Active" : "Hidden"}</span>
@@ -235,20 +329,31 @@ function MenuManagement() {
             <DialogTitle>{editItem ? `Edit — ${editItem.name}` : "Add Menu Item"}</DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
-              <Label className="text-xs">Outlet</Label>
-              <Select value={form.outlet} onValueChange={(v) => setForm({ ...form, outlet: v as Outlet })}>
-                <SelectTrigger className="h-8 mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>{OUTLETS.map((o) => <SelectItem key={o.key} value={o.key}>{o.label}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
+            {!isLive && (
+              <div className="col-span-2">
+                <Label className="text-xs">Outlet</Label>
+                <Select value={form.outlet} onValueChange={(v) => setForm({ ...form, outlet: v as Outlet })}>
+                  <SelectTrigger className="h-8 mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>{OUTLETS.map((o) => <SelectItem key={o.key} value={o.key}>{o.label}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="col-span-2">
               <Label className="text-xs">Item Name *</Label>
               <Input className="h-8 mt-1" placeholder="e.g. Paneer Butter Masala" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
             <div>
-              <Label className="text-xs">Category *</Label>
-              <Input className="h-8 mt-1" placeholder="e.g. Main, Starter, Cocktail" value={form.cat} onChange={(e) => setForm({ ...form, cat: e.target.value })} />
+              <Label className="text-xs">Category{isLive ? "" : " *"}</Label>
+              {isLive ? (
+                <Select value={form.cat} onValueChange={(v) => setForm({ ...form, cat: v })}>
+                  <SelectTrigger className="h-8 mt-1"><SelectValue placeholder="Select category" /></SelectTrigger>
+                  <SelectContent>
+                    {liveCategories.map((c) => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input className="h-8 mt-1" placeholder="e.g. Main, Starter, Cocktail" value={form.cat} onChange={(e) => setForm({ ...form, cat: e.target.value })} />
+              )}
             </div>
             <div>
               <Label className="text-xs">Price (₹) *</Label>
@@ -265,7 +370,31 @@ function MenuManagement() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setAddOpen(false); setEditItem(null); setForm(BLANK_ITEM); }}>Cancel</Button>
-            <Button onClick={saveItem}>{editItem ? "Save Changes" : "Add Item"}</Button>
+            <Button onClick={saveItem} disabled={isPending}>
+              {isPending ? <Loader2 className="size-3.5 animate-spin" /> : (editItem ? "Save Changes" : "Add Item")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Category Dialog (live only) */}
+      <Dialog open={newCatOpen} onOpenChange={setNewCatOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>New Category</DialogTitle></DialogHeader>
+          <div>
+            <Label className="text-xs">Category Name *</Label>
+            <Input className="h-8 mt-1" placeholder="e.g. Starters, Cocktails, Desserts" value={newCatName} onChange={(e) => setNewCatName(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewCatOpen(false)}>Cancel</Button>
+            <Button disabled={createCatM.isPending || !newCatName.trim()} onClick={() => {
+              createCatM.mutate(
+                { name: newCatName.trim() },
+                { onSuccess: () => { toast.success(`Category "${newCatName}" created`); setNewCatOpen(false); setNewCatName(""); }, onError: (e: any) => toast.error(e.message ?? "Failed") },
+              );
+            }}>
+              {createCatM.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Create"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -280,7 +409,9 @@ function MenuManagement() {
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={confirmDelete}>Remove Item</Button>
+            <Button variant="destructive" disabled={deleteM.isPending} onClick={confirmDelete}>
+              {deleteM.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Remove Item"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
