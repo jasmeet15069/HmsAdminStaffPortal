@@ -78,6 +78,25 @@ function FrontDesk() {
         nights: r.nights, rate: r.total_amount ?? 0,
       })) : [];
 
+  // Room-map / room-count source. In live mode this MUST come from the tenant's
+  // real rooms (liveRoomsQ), not the demo store — otherwise a real hotel sees
+  // fabricated demo rooms on its Front Desk. Live RoomStatus
+  // (available/occupied/cleaning/maintenance) is mapped onto the demo status
+  // vocabulary so the existing room-map rendering + legend keep working.
+  type DeskRoom = { id: string; number: string; type: string; floor: number; status: RoomStatus };
+  const liveStatusToDemo: Record<string, RoomStatus> = {
+    available: "vacant_clean", occupied: "occupied", cleaning: "vacant_dirty", maintenance: "maintenance",
+  };
+  const deskRooms: DeskRoom[] = useMemo(() => {
+    if (isLive) {
+      return (liveRoomsQ.data ?? []).map((rm) => ({
+        id: rm.id, number: rm.room_number, type: rm.room_type, floor: rm.floor,
+        status: liveStatusToDemo[rm.status] ?? "vacant_clean",
+      }));
+    }
+    return rooms.map((rm) => ({ id: rm.id, number: rm.number, type: rm.type, floor: rm.floor, status: rm.status }));
+  }, [isLive, liveRoomsQ.data, rooms]);
+
   const demoArrivals: DeskRow[] = useMemo(() => reservations
     .filter((r) => r.status === "confirmed" || (r.checkIn <= today && r.status === "pending"))
     .map((r) => {
@@ -117,8 +136,8 @@ function FrontDesk() {
     r.roomLabel.toLowerCase().includes(searchInhouse.toLowerCase())
   );
 
-  const availableRooms = rooms.filter((r) => r.status === "vacant_clean").length;
-  const vipCount = isLive ? liveArrivals.filter((r) => r.vip).length : guests.filter((g) => g.vip && reservations.some((r) => r.guestId === g.id && r.status === "checked_in")).length;
+  const availableRooms = deskRooms.filter((r) => r.status === "vacant_clean").length;
+  const vipCount = isLive ? liveInHouse.filter((r) => r.vip).length : guests.filter((g) => g.vip && reservations.some((r) => r.guestId === g.id && r.status === "checked_in")).length;
 
   const doCheckIn = (id: string, name: string, room: string) => {
     if (isLive) checkInM.mutate(id, { onSuccess: () => toast.success(`${name} checked in`) });
@@ -137,14 +156,13 @@ function FrontDesk() {
     return "bg-muted text-muted-foreground";
   };
 
-  // Room map — group by floor
+  // Room map — group by floor (from the live-or-demo room source)
   const floors = useMemo(() => {
-    const groups: Record<number, typeof rooms> = {};
-    rooms.forEach((r) => { groups[r.floor] ??= []; groups[r.floor].push(r); });
+    const groups: Record<number, DeskRoom[]> = {};
+    deskRooms.forEach((r) => { groups[r.floor] ??= []; groups[r.floor].push(r); });
     return Object.entries(groups).sort(([a], [b]) => Number(a) - Number(b));
-  }, [rooms]);
+  }, [deskRooms]);
   const [activeFloor, setActiveFloor] = useState<string | null>(null);
-  const mapRooms = activeFloor ? rooms.filter((r) => r.floor === Number(activeFloor)) : rooms;
 
   return (
     <>
@@ -392,7 +410,7 @@ function FrontDesk() {
           </div>
 
           {/* Per-floor sections */}
-          {(activeFloor ? [[activeFloor, rooms.filter((r) => r.floor === Number(activeFloor))]] as [string, typeof rooms][] : floors).map(([floor, floorRooms]) => {
+          {(activeFloor ? [[activeFloor, deskRooms.filter((r) => r.floor === Number(activeFloor))]] as [string, DeskRoom[]][] : floors).map(([floor, floorRooms]) => {
             const clean = floorRooms.filter((r) => r.status === "vacant_clean").length;
             const dirty = floorRooms.filter((r) => r.status === "vacant_dirty").length;
             const occ = floorRooms.filter((r) => r.status === "occupied").length;
@@ -410,15 +428,18 @@ function FrontDesk() {
                 </div>
                 <div className="grid grid-cols-6 sm:grid-cols-10 lg:grid-cols-14 gap-1.5">
                   {floorRooms.map((r) => {
-                    const meta = roomStatusMeta[r.status as RoomStatus];
-                    const res = reservations.find((rv) => rv.roomId === r.id && rv.status === "checked_in");
+                    const meta = roomStatusMeta[r.status];
+                    // Demo mode can resolve the occupying guest for the tooltip; live
+                    // room IDs won't match the demo store, so fall back to status.
+                    const res = !isLive ? reservations.find((rv) => rv.roomId === r.id && rv.status === "checked_in") : null;
                     const guest = res ? guests.find((g) => g.id === res.guestId) : null;
+                    const occupied = r.status === "occupied";
                     return (
                       <div key={r.id} title={guest ? `${guest.name}` : meta.label}
                         className={`border rounded p-1.5 text-center cursor-default hover:shadow transition ${meta.color}`}>
                         <div className="font-mono text-xs font-bold leading-tight">{r.number}</div>
                         <div className="text-[9px] opacity-70 leading-tight truncate">{r.type[0]}</div>
-                        {guest && <div className="size-1.5 rounded-full bg-current mx-auto mt-0.5 opacity-70" />}
+                        {occupied && <div className="size-1.5 rounded-full bg-current mx-auto mt-0.5 opacity-70" />}
                       </div>
                     );
                   })}
