@@ -71,8 +71,24 @@ function MasterAdmin() {
   const [form, setForm] = useState(blankCreate);
   const [moduleTenant, setModuleTenant] = useState<PlatformTenant | null>(null);
 
-  const tenants = tenantsQ.data ?? [];
+  const allTenants = tenantsQ.data ?? [];
   const plans = plansQ.data ?? [];
+
+  // When accessed via a client subdomain (e.g. testingxyz.serenentra.com) scope
+  // the tenant list to only that client so the platform-admin cannot accidentally
+  // see or modify other clients from within a client's own portal URL.
+  const subdomain = typeof window !== "undefined"
+    ? (() => {
+        const h = window.location.hostname;
+        if (h.endsWith(".serenentra.com")) return h.replace(/\.serenentra\.com$/, "");
+        if (h.endsWith(".jazverse.online")) return null; // main admin portal — show all
+        return null;
+      })()
+    : null;
+  const tenants = subdomain
+    ? allTenants.filter((t) => t.slug === subdomain)
+    : allTenants;
+
   const stats = useMemo(() => {
     const active = tenants.filter((t) => t.is_active).length;
     return { total: tenants.length, active, suspended: tenants.length - active };
@@ -126,9 +142,11 @@ function MasterAdmin() {
         title="Master Control"
         description="Platform super-admin — provision client instances, manage plans, and mask modules per tenant."
         actions={
-          <Button className="gap-1.5" onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" /> New Client
-          </Button>
+          !subdomain && (
+            <Button className="gap-1.5" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" /> New Client
+            </Button>
+          )
         }
       />
 
@@ -141,7 +159,7 @@ function MasterAdmin() {
       <div className="bg-card border rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b flex items-center gap-2">
           <ShieldCheck className="size-4 text-primary" />
-          <span className="font-medium text-sm">Client Tenants</span>
+          <span className="font-medium text-sm">{subdomain ? `Client: ${subdomain}` : "Client Tenants"}</span>
           {tenantsQ.isLoading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
         </div>
         <div className="overflow-x-auto">
