@@ -27,6 +27,7 @@ import { Route as MasterRouteImport } from './routes/master'
 import { Route as MaintenanceRouteImport } from './routes/maintenance'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as InventoryRouteImport } from './routes/inventory'
+import { Route as ImpersonateRouteImport } from './routes/impersonate'
 import { Route as HousekeepingRouteImport } from './routes/housekeeping'
 import { Route as FrontDeskRouteImport } from './routes/front-desk'
 import { Route as CrmRouteImport } from './routes/crm'
@@ -130,6 +131,11 @@ const InventoryRoute = InventoryRouteImport.update({
   path: '/inventory',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ImpersonateRoute = ImpersonateRouteImport.update({
+  id: '/impersonate',
+  path: '/impersonate',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const HousekeepingRoute = HousekeepingRouteImport.update({
   id: '/housekeeping',
   path: '/housekeeping',
@@ -201,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/crm': typeof CrmRoute
   '/front-desk': typeof FrontDeskRoute
   '/housekeeping': typeof HousekeepingRoute
+  '/impersonate': typeof ImpersonateRoute
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
@@ -233,6 +240,7 @@ export interface FileRoutesByTo {
   '/crm': typeof CrmRoute
   '/front-desk': typeof FrontDeskRoute
   '/housekeeping': typeof HousekeepingRoute
+  '/impersonate': typeof ImpersonateRoute
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
@@ -266,6 +274,7 @@ export interface FileRoutesById {
   '/crm': typeof CrmRoute
   '/front-desk': typeof FrontDeskRoute
   '/housekeeping': typeof HousekeepingRoute
+  '/impersonate': typeof ImpersonateRoute
   '/inventory': typeof InventoryRoute
   '/login': typeof LoginRoute
   '/maintenance': typeof MaintenanceRoute
@@ -300,6 +309,7 @@ export interface FileRouteTypes {
     | '/crm'
     | '/front-desk'
     | '/housekeeping'
+    | '/impersonate'
     | '/inventory'
     | '/login'
     | '/maintenance'
@@ -332,6 +342,7 @@ export interface FileRouteTypes {
     | '/crm'
     | '/front-desk'
     | '/housekeeping'
+    | '/impersonate'
     | '/inventory'
     | '/login'
     | '/maintenance'
@@ -364,6 +375,7 @@ export interface FileRouteTypes {
     | '/crm'
     | '/front-desk'
     | '/housekeeping'
+    | '/impersonate'
     | '/inventory'
     | '/login'
     | '/maintenance'
@@ -397,6 +409,7 @@ export interface RootRouteChildren {
   CrmRoute: typeof CrmRoute
   FrontDeskRoute: typeof FrontDeskRoute
   HousekeepingRoute: typeof HousekeepingRoute
+  ImpersonateRoute: typeof ImpersonateRoute
   InventoryRoute: typeof InventoryRoute
   LoginRoute: typeof LoginRoute
   MaintenanceRoute: typeof MaintenanceRoute
@@ -546,6 +559,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InventoryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/impersonate': {
+      id: '/impersonate'
+      path: '/impersonate'
+      fullPath: '/impersonate'
+      preLoaderRoute: typeof ImpersonateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/housekeeping': {
       id: '/housekeeping'
       path: '/housekeeping'
@@ -657,6 +677,7 @@ const rootRouteChildren: RootRouteChildren = {
   CrmRoute: CrmRoute,
   FrontDeskRoute: FrontDeskRoute,
   HousekeepingRoute: HousekeepingRoute,
+  ImpersonateRoute: ImpersonateRoute,
   InventoryRoute: InventoryRoute,
   LoginRoute: LoginRoute,
   MaintenanceRoute: MaintenanceRoute,

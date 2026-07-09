@@ -189,6 +189,7 @@ export default function AppShell() {
   // users away from /login. Only runs client-side (after mount) to avoid SSR mismatch.
   useEffect(() => {
     if (!mounted) return;
+    if (path === "/impersonate") return;
     if (!isAuthenticated() && path !== "/login") {
       navigate({ to: "/login" });
     } else if (isAuthenticated() && path === "/login") {
@@ -215,8 +216,9 @@ export default function AppShell() {
       .join("")
       .slice(0, 2) || "G";
 
-  // The login route renders its own full-screen layout — no app chrome.
-  if (path === "/login") {
+  // The login and impersonate-exchange routes render their own full-screen
+  // layout — no app chrome, and (for impersonate) no auth-required check.
+  if (path === "/login" || path === "/impersonate") {
     return (
       <>
         <Outlet />

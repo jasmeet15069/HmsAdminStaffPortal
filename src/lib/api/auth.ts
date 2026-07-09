@@ -16,6 +16,7 @@ interface AuthState {
   error: string | null;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  exchangeImpersonationTicket: (ticket: string) => Promise<void>;
 }
 
 export const useAuth = create<AuthState>()(
@@ -36,6 +37,25 @@ export const useAuth = create<AuthState>()(
           set({ user: session.user, status: "idle", error: null });
         } catch (err) {
           const message = err instanceof Error ? err.message : "Sign in failed";
+          set({ status: "error", error: message });
+          throw err;
+        }
+      },
+      // Exchanges a one-time superadmin "login as client" ticket for a real
+      // session. No password involved — see golangserver's
+      // POST /api/auth/impersonate/exchange.
+      exchangeImpersonationTicket: async (ticket) => {
+        set({ status: "loading", error: null });
+        try {
+          const session = await apiFetch<Session>("/api/auth/impersonate/exchange", {
+            method: "POST",
+            body: { ticket },
+            auth: false,
+          });
+          setTokens(session);
+          set({ user: session.user, status: "idle", error: null });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Impersonation ticket is invalid or expired";
           set({ status: "error", error: message });
           throw err;
         }
