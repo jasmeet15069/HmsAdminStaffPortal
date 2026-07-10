@@ -3,7 +3,6 @@ import { useState } from "react";
 import { Hotel, Loader2 } from "lucide-react";
 
 import { useAuth } from "@/lib/api/auth";
-import { API_URL } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -78,8 +77,6 @@ function LoginPage() {
             Sign in
           </Button>
         </form>
-
-        <p className="mt-6 text-center text-[11px] text-muted-foreground">API: {API_URL}</p>
       </Card>
     </div>
   );

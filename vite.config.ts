@@ -5,6 +5,11 @@
 //     error logger plugins, and sandbox detection (port/host/strictPort).
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+// Reticle dev-only verification SDK. The lovable wrapper appends `plugins` to its
+// internal plugin list (dist/index.js: `[...internalPlugins, ...options.plugins]`),
+// so this is additive and safe — it does not replace tanstackStart/react/tailwind.
+// The reticle() plugin is dev-only and dropped from production builds.
+import { reticle } from "@reticlehq/core/vite";
 
 // Choose the nitro deploy preset by build environment. The lovable wrapper only
 // runs the nitro deploy plugin when a `nitro` option is present, so we always
@@ -17,6 +22,8 @@ const preset = process.env.VERCEL
   : process.env.NITRO_PRESET || undefined;
 
 export default defineConfig({
+  // Dev-server port is 8080 (wrapper default: server.port 8080). Keep in sync with .reticle.json.
+  plugins: [reticle({ port: 8080 })],
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this

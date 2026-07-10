@@ -36,3 +36,6 @@ dist-ssr
 .output
 
 .vercel
+
+# Strix pentest scan output (may contain sensitive findings)
+strix_runs/
