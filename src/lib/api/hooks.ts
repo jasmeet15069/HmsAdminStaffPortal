@@ -45,6 +45,8 @@ import type {
   PricingRule,
   Promotion,
   PurchaseOrder,
+  Branch,
+  RatePlan,
   Reservation,
   ReservationDetail,
   Room,
@@ -934,6 +936,38 @@ export function useUpdatePromotion() {
   });
 }
 
+export function useRatePlans() {
+  return useQuery({
+    queryKey: ["booking", "rate-plans"] as const,
+    queryFn: () =>
+      apiFetch<RatePlan[] | null>("/api/booking/rate-plans").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+export function useCreateRatePlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<RatePlan>) =>
+      apiFetch("/api/booking/rate-plans", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["booking", "rate-plans"] }),
+  });
+}
+export function useUpdateRatePlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<RatePlan> }) =>
+      apiFetch(`/api/booking/rate-plans/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["booking", "rate-plans"] }),
+  });
+}
+export function useDeleteRatePlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch(`/api/booking/rate-plans/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["booking", "rate-plans"] }),
+  });
+}
 export function useDeletePromotion() {
   const qc = useQueryClient();
   return useMutation({
@@ -1101,6 +1135,45 @@ export function useProperties() {
     queryKey: ["properties"] as const,
     queryFn: () => apiFetch<unknown[] | null>("/api/tables/properties").then((d) => d ?? []),
     enabled: isAuthenticated(),
+  });
+}
+
+// Branches = real multi-property CRUD (/api/branches). Preferred over the compat
+// useProperties read above: this is plan-limit gated and has a create endpoint.
+export function useBranches(opts?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ["branches"] as const,
+    queryFn: () => apiFetch<Branch[] | null>("/api/branches").then((d) => d ?? []),
+    // Branches are hotel-admin only; callers pass enabled:false for non-admins so
+    // we don't fire a request that would 403.
+    enabled: isAuthenticated() && (opts?.enabled ?? true),
+  });
+}
+
+export function useCreateBranch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<Branch>) =>
+      apiFetch("/api/branches", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["branches"] }),
+  });
+}
+
+export function useUpdateBranch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<Branch> }) =>
+      apiFetch(`/api/branches/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["branches"] }),
+  });
+}
+
+export function useDeleteBranch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch(`/api/branches/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["branches"] }),
   });
 }
 

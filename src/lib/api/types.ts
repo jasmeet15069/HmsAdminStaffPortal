@@ -679,3 +679,33 @@ export interface InventoryItem {
   created_at: string;
   updated_at: string;
 }
+
+// Booking Engine — rate plans (/api/booking/rate-plans)
+export interface RatePlan {
+  id: string;
+  hotel_id: string;
+  name: string;
+  description: string;
+  discount_type: "percentage" | "fixed" | null;
+  discount_value: number;
+  min_stay_nights: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+// Properties / branches (/api/branches) — a branch is a property inside a client.
+export interface Branch {
+  id: string;
+  name: string;
+  code: string;
+  address: string;
+  phone: string;
+  email: string;
+  timezone: string;
+  currency: string;
+  star_rating: number | null;
+  total_rooms: number | null;
+  is_active: boolean;
+  is_primary: boolean;
+  created_at: string;
+}

@@ -10,12 +10,12 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
-import { Calendar, TrendingUp, Globe2, Plus, Tag, CheckCircle2, Edit2, Trash2, Loader2 } from "lucide-react";
+import { Calendar, TrendingUp, Globe2, Plus, Tag, CheckCircle2, Trash2, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/api/auth";
-import { usePromotions, useCreatePromotion, useUpdatePromotion, useDeletePromotion, useBookingAvailability } from "@/lib/api/hooks";
-import type { Promotion } from "@/lib/api/types";
+import { usePromotions, useCreatePromotion, useUpdatePromotion, useDeletePromotion, useBookingAvailability, useRatePlans, useCreateRatePlan, useUpdateRatePlan, useDeleteRatePlan } from "@/lib/api/hooks";
+import type { Promotion, RatePlan } from "@/lib/api/types";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 const INITIAL_RATE_PLANS = [
@@ -67,6 +67,10 @@ function BookingEngine() {
   const createPromoM = useCreatePromotion();
   const updatePromoM = useUpdatePromotion();
   const deletePromoM = useDeletePromotion();
+  const ratePlansQ = useRatePlans();
+  const createRatePlanM = useCreateRatePlan();
+  const updateRatePlanM = useUpdateRatePlan();
+  const deleteRatePlanM = useDeleteRatePlan();
 
   const [widgetColor, setWidgetColor] = useState("#1a56db");
   const [promoEnabled, setPromoEnabled] = useState(true);
@@ -76,8 +80,63 @@ function BookingEngine() {
   const [searchDate, setSearchDate] = useState({ in: new Date().toISOString().slice(0, 10), out: new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10) });
   const [newPromoOpen, setNewPromoOpen] = useState(false);
   const [newPromo, setNewPromo] = useState({ code: "", discount_type: "percentage", discount_value: "", max_uses: "", valid_until: "" });
+  const [newRatePlanOpen, setNewRatePlanOpen] = useState(false);
+  const [newRatePlan, setNewRatePlan] = useState({ name: "", discount_type: "percentage", discount_value: "", min_stay_nights: "1" });
 
   const isLive = authed && !!promotionsQ.data;
+  const ratePlansLive = authed && !!ratePlansQ.data;
+
+  // Live rate plans (from /api/booking/rate-plans) when authed, else the demo set.
+  const displayRatePlans = useMemo(() => {
+    if (ratePlansLive && ratePlansQ.data) {
+      return ratePlansQ.data.map((p: RatePlan) => ({
+        id: p.id,
+        name: p.name,
+        typeLabel: p.discount_type ? p.discount_type : "Base",
+        discountLabel:
+          p.discount_type === "percentage" ? `-${p.discount_value}%`
+          : p.discount_type === "fixed" ? `-${fmtINR(p.discount_value)}`
+          : "Base",
+        minNights: p.min_stay_nights,
+        active: p.is_active,
+        _live: true,
+      }));
+    }
+    return ratePlans.map((p) => ({
+      id: p.id, name: p.name, typeLabel: p.type,
+      discountLabel: p.discount > 0 ? `-${p.discount}%` : "Base",
+      minNights: 1, active: p.active, _live: false,
+    }));
+  }, [ratePlansLive, ratePlansQ.data, ratePlans]);
+
+  const handleCreateRatePlan = () => {
+    if (!newRatePlan.name.trim()) return;
+    createRatePlanM.mutate({
+      name: newRatePlan.name.trim(),
+      discount_type: newRatePlan.discount_type as RatePlan["discount_type"],
+      discount_value: parseFloat(newRatePlan.discount_value) || 0,
+      min_stay_nights: parseInt(newRatePlan.min_stay_nights) || 1,
+    }, {
+      onSuccess: () => { setNewRatePlanOpen(false); setNewRatePlan({ name: "", discount_type: "percentage", discount_value: "", min_stay_nights: "1" }); toast.success("Rate plan created"); },
+      onError: () => toast.error("Failed to create rate plan"),
+    });
+  };
+
+  const toggleRatePlan = (p: typeof displayRatePlans[0]) => {
+    if (p._live) {
+      updateRatePlanM.mutate({ id: p.id, patch: { is_active: !p.active } }, { onError: () => toast.error("Failed to update") });
+    } else {
+      setRatePlans(ratePlans.map((r) => r.id === p.id ? { ...r, active: !r.active } : r));
+    }
+  };
+
+  const removeRatePlan = (p: typeof displayRatePlans[0]) => {
+    if (p._live) {
+      deleteRatePlanM.mutate(p.id, { onSuccess: () => toast.success("Rate plan removed"), onError: () => toast.error("Failed to delete") });
+    } else {
+      setRatePlans(ratePlans.filter((r) => r.id !== p.id));
+    }
+  };
 
   const displayPromoCodes = useMemo(() => {
     if (isLive && promotionsQ.data) {
@@ -242,44 +301,45 @@ function BookingEngine() {
         {/* Rate Plans */}
         <TabsContent value="rateplans">
           <div className="flex justify-between items-center mb-3">
-            <p className="text-sm text-muted-foreground">{ratePlans.filter((p) => p.active).length} active rate plans</p>
-            <Button size="sm" className="gap-1.5" onClick={() => toast.success("Rate plan created")}>
+            <p className="text-sm text-muted-foreground">
+              {displayRatePlans.filter((p) => p.active).length} active rate plans{ratePlansLive ? " · Live" : " · Demo"}
+            </p>
+            <Button size="sm" className="gap-1.5" onClick={() => ratePlansLive ? setNewRatePlanOpen(true) : toast.success("Rate plan created")}>
               <Plus className="size-4" /> New Rate Plan
             </Button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {ratePlans.map((plan) => (
+            {displayRatePlans.map((plan) => (
               <Card key={plan.id} className={`p-4 transition-opacity ${!plan.active ? "opacity-60" : ""}`}>
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <div className="font-semibold text-sm">{plan.name}</div>
                     <div className="flex items-center gap-1.5 mt-0.5">
-                      <Badge variant="outline" className="text-[10px] font-mono">{plan.code}</Badge>
-                      <Badge variant="secondary" className="text-[10px]">{plan.type}</Badge>
+                      <Badge variant="secondary" className="text-[10px] capitalize">{plan.typeLabel}</Badge>
                     </div>
                   </div>
-                  <Switch checked={plan.active} onCheckedChange={(v) => setRatePlans(ratePlans.map((p) => p.id === plan.id ? { ...p, active: v } : p))} />
+                  <Switch checked={plan.active} onCheckedChange={() => toggleRatePlan(plan)} />
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-center mb-3">
                   <div className="bg-muted/50 rounded p-2">
                     <div className="text-[10px] text-muted-foreground">Discount</div>
-                    <div className="font-bold text-sm">{plan.discount > 0 ? `-${plan.discount}%` : "Base"}</div>
+                    <div className="font-bold text-sm">{plan.discountLabel}</div>
                   </div>
                   <div className="bg-muted/50 rounded p-2">
-                    <div className="text-[10px] text-muted-foreground">Bookings</div>
-                    <div className="font-bold text-sm">{plan.bookings}</div>
+                    <div className="text-[10px] text-muted-foreground">Min nights</div>
+                    <div className="font-bold text-sm">{plan.minNights}</div>
                   </div>
                 </div>
                 <div className="flex gap-1.5">
-                  <Button size="sm" variant="outline" className="flex-1 h-7 gap-1" onClick={() => toast.info(`Editing ${plan.code}`)}>
-                    <Edit2 className="size-3" />Edit
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-7 px-2 text-destructive hover:text-destructive" onClick={() => toast.success("Rate plan removed")}>
+                  <Button size="sm" variant="ghost" className="h-7 px-2 ml-auto text-destructive hover:text-destructive" onClick={() => removeRatePlan(plan)}>
                     <Trash2 className="size-3.5" />
                   </Button>
                 </div>
               </Card>
             ))}
+            {displayRatePlans.length === 0 && (
+              <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No rate plans yet — create your first one.</p>
+            )}
           </div>
         </TabsContent>
 
@@ -463,6 +523,44 @@ function BookingEngine() {
             <Button variant="outline" size="sm" onClick={() => setNewPromoOpen(false)}>Cancel</Button>
             <Button size="sm" disabled={createPromoM.isPending || !newPromo.code} onClick={handleCreatePromo}>
               {createPromoM.isPending && <Loader2 className="size-3.5 mr-1.5 animate-spin" />} Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={newRatePlanOpen} onOpenChange={setNewRatePlanOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>New Rate Plan</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">Name</Label>
+              <Input className="mt-1" placeholder="Non-Refundable Advance" value={newRatePlan.name} onChange={(e) => setNewRatePlan((p) => ({ ...p, name: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Discount Type</Label>
+              <Select value={newRatePlan.discount_type} onValueChange={(v) => setNewRatePlan((p) => ({ ...p, discount_type: v }))}>
+                <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="percentage">Percentage %</SelectItem>
+                  <SelectItem value="fixed">Fixed Amount ₹</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Discount Value</Label>
+                <Input className="mt-1" type="number" placeholder={newRatePlan.discount_type === "percentage" ? "e.g. 15" : "e.g. 500"} value={newRatePlan.discount_value} onChange={(e) => setNewRatePlan((p) => ({ ...p, discount_value: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-xs">Min Nights</Label>
+                <Input className="mt-1" type="number" min={1} placeholder="1" value={newRatePlan.min_stay_nights} onChange={(e) => setNewRatePlan((p) => ({ ...p, min_stay_nights: e.target.value }))} />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setNewRatePlanOpen(false)}>Cancel</Button>
+            <Button size="sm" disabled={createRatePlanM.isPending || !newRatePlan.name.trim()} onClick={handleCreateRatePlan}>
+              {createRatePlanM.isPending && <Loader2 className="size-3.5 mr-1.5 animate-spin" />} Create
             </Button>
           </DialogFooter>
         </DialogContent>

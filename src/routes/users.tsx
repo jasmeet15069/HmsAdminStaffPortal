@@ -297,7 +297,7 @@ function EditUserDialog({ user, onClose }: { user: ApiUser; onClose: () => void 
 // ---------------------------------------------------------------------------
 
 export const Route = createFileRoute("/users")({
-  head: () => ({ meta: [{ title: "Users & Roles · HMS" }] }),
+  head: () => ({ meta: [{ title: "Users & Roles · MHMS" }] }),
   component: Users,
 });
 

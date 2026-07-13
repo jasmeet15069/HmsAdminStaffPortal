@@ -135,9 +135,9 @@ flowchart TB
 | Step | Status | Implementation |
 |---|---|---|
 | 1. Add client | ✅ | `POST /api/platform/tenants` → `CreatePlatformTenant` |
-| 2. Dedicated DB | ✅ | `Manager.Provision()` creates `{slug}_hotelops`, runs `EnsureAppSchema`, then `seedTenantDB` seeds template data (rooms, menu categories, payment methods, outlet, config) |
-| 3. Create subdomain | ⛔ | **Manual** — Nginx server block written by hand on the VM |
-| 4. DNS configuration | ⛔ | **Manual** — DNS record added by hand (Cloudflare API integration planned) |
+| 2. Dedicated DB | ✅ | `Manager.Provision()` creates `{slug}_hotelops`, runs `EnsureAppSchema`, then `seedTenantDB` seeds **only** the hotel record, branding, payment config, and the initial `tenant_configs` snapshot — **no** operational content (blank-slate by design; template-seeding of rooms/menu/outlet was reversed 2026-07-02) |
+| 3. Create subdomain | ⛔ | **Manual** — Nginx server block written by hand on the VM (shared vhost template) |
+| 4. DNS configuration | ⛔ | **Manual** — DNS record added by hand in **GoDaddy** (the earlier Cloudflare-API integration idea was abandoned; `CLOUDFLARE_*` env keys are vestigial) |
 | 5. Route configuration | ⛔ | **Manual** — Nginx reload |
 | 6. System configuration | ✅ | Plan-aware branding + `tenant_configs` + module mask seeded on create |
 | 7. First admin user | ✅ | Optional admin user + `platform_admin`/role rows created during step 1 |

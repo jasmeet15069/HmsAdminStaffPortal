@@ -28,7 +28,10 @@ import {
   type JournalEntry, type JournalEntryDetail, type TrialBalanceRow,
 } from "@/lib/api/accounting-hooks";
 
-export const Route = createFileRoute("/accounting")({ component: AccountingPage });
+export const Route = createFileRoute("/accounting")({
+  component: AccountingPage,
+  head: () => ({ meta: [{ title: "Accounting · MHMS" }] }),
+});
 
 const fmtCurr = (n: number) => (n ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
 
