@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, Shield, CheckCircle2, XCircle, Clock, Loader2, Eye, EyeOff, Trash2, Lock } from "lucide-react";
+import { Plus, Search, Shield, CheckCircle2, XCircle, Clock, Loader2, Eye, EyeOff, Trash2, Lock, MoreVertical, Pencil } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/api/auth";
@@ -316,6 +317,15 @@ function Users() {
   const [form, setForm] = useState({ name: "", password: "", role: "Front Desk" as UiRole });
   const [showAddPw, setShowAddPw] = useState(false);
   const [editUser, setEditUser] = useState<ApiUser | null>(null);
+  const removeUser = useDeleteUser();
+
+  const handleRemove = (u: ApiUser) => {
+    if (!window.confirm(`Remove ${u.full_name || u.email}? This deletes their staff account.`)) return;
+    removeUser.mutate(u.id, {
+      onSuccess: () => toast.success(`${u.full_name || u.email} removed`),
+      onError: (e: any) => toast.error(e.message ?? "Failed to remove"),
+    });
+  };
 
   const filtered = users.filter((u) => {
     const name = u.full_name || u.email;
@@ -485,14 +495,26 @@ function Users() {
                           <td className="px-4 py-3 text-muted-foreground text-xs">{u.joined_at}</td>
                           {canManage && (
                             <td className="px-4 py-3 text-right">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 px-3 text-xs"
-                                onClick={() => setEditUser(u)}
-                              >
-                                Edit
-                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button size="sm" variant="ghost" className="h-7 w-7 px-0" aria-label="Actions">
+                                    <MoreVertical className="size-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-40">
+                                  <DropdownMenuItem onClick={() => setEditUser(u)}>
+                                    <Pencil className="size-3.5 mr-2" /> Edit
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    disabled={removeUser.isPending}
+                                    onClick={() => handleRemove(u)}
+                                  >
+                                    <Trash2 className="size-3.5 mr-2" /> Remove
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </td>
                           )}
                         </tr>
