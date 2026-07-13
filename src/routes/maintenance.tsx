@@ -244,7 +244,13 @@ function Maintenance() {
                             </Badge>
                           </td>
                           <td className="px-4 py-3">
-                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => toast.success(`Work order created for ${a.name}`)}>Schedule</Button>
+                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={createTaskM.isPending}
+                              onClick={() => isLive
+                                ? createTaskM.mutate(
+                                    { asset_id: a.id, task_name: `Service: ${a.name}`, frequency: "quarterly", next_due: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10) },
+                                    { onSuccess: () => toast.success(`Work order scheduled for ${a.name}`), onError: (e: any) => toast.error(e?.message ?? "Failed to schedule") },
+                                  )
+                                : toast.success(`Work order created for ${a.name}`)}>Schedule</Button>
                           </td>
                         </tr>
                       ))

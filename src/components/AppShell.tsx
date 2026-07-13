@@ -35,7 +35,7 @@ import {
 import { useEffect, useState } from "react";
 import { useMHMS } from "@/lib/mhms-store";
 import { useAuth, isAuthenticated } from "@/lib/api/auth";
-import { useTenantModules, useHotelBranding } from "@/lib/api/hooks";
+import { useTenantModules, useHotelBranding, useBranches } from "@/lib/api/hooks";
 import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -157,13 +157,26 @@ export default function AppShell() {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
   const { properties, currentProperty, setProperty } = useMHMS();
-  const current = properties.find((p) => p.id === currentProperty) ?? properties[0];
 
   const user = useAuth((s) => s.user);
   const signOut = useAuth((s) => s.signOut);
 
   const brandingQ = useHotelBranding();
   const hotelName = brandingQ.data?.hotel_name;
+
+  // Property switcher. Priority: the client's REAL branches (from /api/branches);
+  // else, for a signed-in user, a single entry for their own hotel (never the demo
+  // cities once logged in); the hardcoded demo list only shows in preview/unauthed.
+  // The list endpoint is hotel-admin only, so the query is gated to admins.
+  const isHotelAdmin = !!user?.roles?.some((r) => ["hotel_admin", "admin", "super_admin"].includes(r));
+  const branchesQ = useBranches({ enabled: isHotelAdmin });
+  const realBranches = branchesQ.data ?? [];
+  const propList = realBranches.length > 0
+    ? realBranches.map((b) => ({ id: b.id, name: b.name, sub: b.address || b.code || (b.total_rooms != null ? `${b.total_rooms} rooms` : "") }))
+    : user
+      ? [{ id: "primary", name: hotelName || "My Property", sub: isHotelAdmin ? "Add properties in Properties" : "" }]
+      : properties.map((p) => ({ id: p.id, name: p.name, sub: `${p.city} · ${p.rooms} rooms` }));
+  const current = propList.find((p) => p.id === currentProperty) ?? propList[0];
 
   // Per-tenant module flags. Default-on while loading/offline so we never flash
   // an empty sidebar or lock the user out before the flags arrive.
@@ -342,7 +355,7 @@ export default function AppShell() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-64">
               <DropdownMenuLabel>Switch Property</DropdownMenuLabel>
-              {properties.map((p) => (
+              {propList.map((p) => (
                 <DropdownMenuItem
                   key={p.id}
                   onClick={() => {
@@ -352,12 +365,13 @@ export default function AppShell() {
                 >
                   <div className="flex flex-col">
                     <span className="font-medium">{p.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {p.city} · {p.rooms} rooms
-                    </span>
+                    {p.sub && <span className="text-xs text-muted-foreground">{p.sub}</span>}
                   </div>
                 </DropdownMenuItem>
               ))}
+              {propList.length === 0 && (
+                <div className="px-2 py-1.5 text-xs text-muted-foreground">No properties yet.</div>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 

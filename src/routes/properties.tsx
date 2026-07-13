@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/api/auth";
-import { useProperties, useBranches, useCreateBranch, useUpdateBranch, useDeleteBranch } from "@/lib/api/hooks";
+import { useProperties, useBranches, useCreateBranch, useUpdateBranch, useDeleteBranch, useRooms } from "@/lib/api/hooks";
 import type { Branch } from "@/lib/api/types";
 
 // The Properties/branches feature is hotel-admin only (matches the backend gate).
@@ -60,10 +60,13 @@ function Properties() {
   const createBranchM = useCreateBranch();
   const updateBranchM = useUpdateBranch();
   const deleteBranchM = useDeleteBranch();
+  const roomsQ = useRooms();
   const { properties: demoProperties, setProperty, rooms } = useMHMS();
 
   const liveBranches = authed && isHotelAdmin && branchesQ.data ? branchesQ.data : [];
   const branchesLive = authed && isHotelAdmin && !!branchesQ.data;
+  const liveRooms = authed && roomsQ.data ? roomsQ.data : [];
+  const roomsLive = authed && !!roomsQ.data;
   const liveCount = branchesLive ? liveBranches.length : null;
   const properties = demoProperties;
 
@@ -126,33 +129,42 @@ function Properties() {
     });
   };
 
+  // Property Detail is driven by the selected REAL branch when available.
+  const selectedBranch = liveBranches.find((b) => b.id === selectedProperty) ?? liveBranches[0] ?? null;
   const selectedP = properties.find((p) => p.id === selectedProperty);
   const selectedDetails = PROPERTY_DETAILS.find((d) => d.id === selectedProperty);
-  const propertyRooms = rooms; // in a multi-property setup, rooms would be filtered by property
 
-  const avgOcc = properties.length ? Math.round(properties.reduce((s, p) => s + p.occupancy, 0) / properties.length) : 0;
-  const avgAdr = properties.length ? Math.round(properties.reduce((s, p) => s + p.adr, 0) / properties.length) : 0;
-  const totalRooms = properties.reduce((s, p) => s + p.rooms, 0);
+  // Room Types + occupancy come from the REAL rooms (/api/rooms) when signed in.
+  const roomTypeBreakdown = roomsLive
+    ? Array.from(new Set(liveRooms.map((r) => r.room_type))).map((t) => {
+        const rs = liveRooms.filter((r) => r.room_type === t);
+        return {
+          type: t,
+          total: rs.length,
+          occupied: rs.filter((r) => r.status === "occupied").length,
+          rate: rs[0]?.price_per_night ?? 0,
+        };
+      })
+    : Array.from(new Set(rooms.map((r) => r.type))).map((t) => ({
+        type: t,
+        total: rooms.filter((r) => r.type === t).length,
+        occupied: rooms.filter((r) => r.type === t && r.status === "occupied").length,
+        rate: rooms.find((r) => r.type === t)?.rate ?? 0,
+      }));
 
-  const roomTypeBreakdown = Array.from(new Set(propertyRooms.map((r) => r.type))).map((t) => ({
-    type: t,
-    total: propertyRooms.filter((r) => r.type === t).length,
-    occupied: propertyRooms.filter((r) => r.type === t && r.status === "occupied").length,
-    rate: propertyRooms.find((r) => r.type === t)?.rate ?? 0,
-  }));
+  // Portfolio totals: real rooms + real occupancy when signed in.
+  const totalRooms = roomsLive
+    ? liveRooms.length
+    : (branchesLive ? liveBranches.reduce((s, b) => s + (b.total_rooms ?? 0), 0) : properties.reduce((s, p) => s + p.rooms, 0));
+  const occupiedRooms = roomsLive ? liveRooms.filter((r) => r.status === "occupied").length : 0;
+  const avgOcc = roomsLive
+    ? (liveRooms.length ? Math.round((occupiedRooms / liveRooms.length) * 100) : 0)
+    : (properties.length ? Math.round(properties.reduce((s, p) => s + p.occupancy, 0) / properties.length) : 0);
 
-  const portfolioMetrics = properties.map((p) => ({
-    property: p.name.split(" ").slice(-1)[0],
-    occupancy: p.occupancy,
-    adr: Math.round(p.adr / 1000),
-  }));
-
-  const radarData = properties.map((p) => ({
-    property: p.name.split(" ").slice(-1)[0],
-    Occupancy: p.occupancy,
-    ADR: Math.round(p.adr / 100),
-    RevPAR: Math.round((p.adr * p.occupancy / 100) / 100),
-  }));
+  // Per-property bar chart: real branches by their room count when available.
+  const portfolioMetrics = branchesLive
+    ? liveBranches.map((b) => ({ property: b.code || b.name.split(" ")[0], rooms: b.total_rooms ?? 0, active: b.is_active ? 1 : 0 }))
+    : properties.map((p) => ({ property: p.name.split(" ").slice(-1)[0], rooms: p.rooms, active: 1 }));
 
   return (
     <>
@@ -170,9 +182,9 @@ function Properties() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
         <Stat label="Properties" value={liveCount ?? properties.length} hint={liveCount !== null ? "Live · in portfolio" : "Demo portfolio"} />
-        <Stat label="Total Rooms" value={totalRooms} hint="Across all properties" />
-        <Stat label="Portfolio Occupancy" value={`${avgOcc}%`} tone="info" hint="Average across properties" />
-        <Stat label="Portfolio ADR" value={fmtINR(avgAdr)} tone="success" hint="Average daily rate" />
+        <Stat label="Total Rooms" value={totalRooms} hint={roomsLive ? "Live · from rooms" : "Across all properties"} />
+        <Stat label="Occupancy" value={`${avgOcc}%`} tone="info" hint={roomsLive ? `${occupiedRooms} occupied now` : "Average across properties"} />
+        <Stat label="Occupied Rooms" value={roomsLive ? occupiedRooms : "—"} tone="success" hint={roomsLive ? "Live" : "Sign in for live"} />
       </div>
 
       <Tabs defaultValue="branches">
@@ -236,159 +248,148 @@ function Properties() {
 
         {/* Portfolio Overview */}
         <TabsContent value="portfolio">
+          {authed && !isHotelAdmin ? (
+            <Card className="p-10 text-center text-sm text-muted-foreground flex flex-col items-center gap-2">
+              <Lock className="size-6 text-muted-foreground/70" /> Restricted to the hotel admin.
+            </Card>
+          ) : (
+          <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <Card className="p-5">
-              <h3 className="font-semibold mb-4">Occupancy & ADR by Property</h3>
+              <h3 className="font-semibold mb-4">Rooms by Property {branchesLive ? "" : <span className="text-xs font-normal text-muted-foreground">· demo</span>}</h3>
               <div className="h-60">
                 <ResponsiveContainer>
                   <BarChart data={portfolioMetrics}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                     <XAxis dataKey="property" fontSize={11} />
-                    <YAxis yAxisId="l" fontSize={11} />
-                    <YAxis yAxisId="r" orientation="right" fontSize={11} />
+                    <YAxis fontSize={11} allowDecimals={false} />
                     <Tooltip />
-                    <Legend />
-                    <Bar yAxisId="l" dataKey="occupancy" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} name="Occupancy %" />
-                    <Bar yAxisId="r" dataKey="adr" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} name="ADR (₹'000)" />
+                    <Bar dataKey="rooms" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} name="Rooms" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </Card>
             <Card className="p-5">
-              <h3 className="font-semibold mb-4">Performance Radar</h3>
+              <h3 className="font-semibold mb-4">Room Status {roomsLive ? "" : <span className="text-xs font-normal text-muted-foreground">· demo</span>}</h3>
               <div className="h-60">
                 <ResponsiveContainer>
-                  <RadarChart data={radarData}>
-                    <PolarGrid />
-                    <PolarAngleAxis dataKey="property" fontSize={11} />
-                    <Radar name="Occupancy" dataKey="Occupancy" stroke="hsl(var(--chart-1))" fill="hsl(var(--chart-1))" fillOpacity={0.2} />
-                    <Radar name="ADR Index" dataKey="ADR" stroke="hsl(var(--chart-2))" fill="hsl(var(--chart-2))" fillOpacity={0.2} />
-                    <Legend />
+                  <BarChart data={roomTypeBreakdown.map((rt) => ({ type: rt.type, occupied: rt.occupied, available: rt.total - rt.occupied }))}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="type" fontSize={11} />
+                    <YAxis fontSize={11} allowDecimals={false} />
                     <Tooltip />
-                  </RadarChart>
+                    <Legend />
+                    <Bar dataKey="occupied" stackId="a" fill="hsl(var(--chart-1))" name="Occupied" />
+                    <Bar dataKey="available" stackId="a" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} name="Available" />
+                  </BarChart>
                 </ResponsiveContainer>
               </div>
             </Card>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {properties.map((p, idx) => {
-              const details = PROPERTY_DETAILS[idx] ?? PROPERTY_DETAILS[0];
-              return (
-                <Card key={p.id} className="p-4 hover:shadow-md transition-shadow cursor-pointer" onClick={() => { setProperty(p.id); setSelectedProperty(p.id); toast.success(`Switched to ${p.name}`); }}>
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="size-10 rounded-lg bg-primary/10 text-primary grid place-items-center shrink-0">
-                        <Building2 className="size-5" />
-                      </div>
-                      <div>
-                        <div className="font-semibold">{p.name}</div>
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <MapPin className="size-3" />{p.city}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 text-xs font-medium">
-                      <Star className="size-3 text-yellow-500" />
-                      {details.rating}
+            {liveBranches.map((b) => (
+              <Card key={b.id} className={`p-4 hover:shadow-md transition-shadow cursor-pointer ${!b.is_active ? "opacity-60" : ""}`} onClick={() => { setProperty(b.id); setSelectedProperty(b.id); }}>
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="size-10 rounded-lg bg-primary/10 text-primary grid place-items-center shrink-0"><Building2 className="size-5" /></div>
+                    <div>
+                      <div className="font-semibold flex items-center gap-1.5">{b.name}{b.is_primary && <Badge variant="secondary" className="text-[10px]">Primary</Badge>}</div>
+                      {b.address && <div className="flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="size-3" />{b.address}</div>}
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-center mb-3">
-                    <div className="bg-muted/50 rounded p-2">
-                      <div className="text-[10px] text-muted-foreground">Rooms</div>
-                      <div className="font-bold text-sm">{p.rooms}</div>
-                    </div>
-                    <div className="bg-muted/50 rounded p-2">
-                      <div className="text-[10px] text-muted-foreground">Occupancy</div>
-                      <div className="font-bold text-sm">{p.occupancy}%</div>
-                    </div>
-                    <div className="bg-muted/50 rounded p-2">
-                      <div className="text-[10px] text-muted-foreground">ADR</div>
-                      <div className="font-bold text-sm">{Math.round(p.adr / 1000)}K</div>
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="text-[10px]">{details.category}</Badge>
-                </Card>
-              );
-            })}
+                  {b.star_rating ? <div className="flex items-center gap-1 text-xs font-medium"><Star className="size-3 text-yellow-500" />{b.star_rating}</div> : null}
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="bg-muted/50 rounded p-2"><div className="text-[10px] text-muted-foreground">Code</div><div className="font-bold text-sm font-mono">{b.code || "—"}</div></div>
+                  <div className="bg-muted/50 rounded p-2"><div className="text-[10px] text-muted-foreground">Rooms</div><div className="font-bold text-sm">{b.total_rooms ?? "—"}</div></div>
+                </div>
+              </Card>
+            ))}
+            {liveBranches.length === 0 && (
+              <p className="text-sm text-muted-foreground col-span-full py-6 text-center">No properties yet — add one in the Branches tab.</p>
+            )}
           </div>
+          </>
+          )}
         </TabsContent>
 
-        {/* Property Detail */}
+        {/* Property Detail — driven by the selected real branch */}
         <TabsContent value="property">
-          <div className="flex gap-2 mb-4 flex-wrap">
-            {properties.map((p) => (
-              <button key={p.id} onClick={() => setSelectedProperty(p.id)}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${selectedProperty === p.id ? "bg-secondary text-secondary-foreground border-secondary" : "hover:border-muted-foreground/40"}`}>
-                {p.name}
-              </button>
-            ))}
-          </div>
-          {selectedP && selectedDetails && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <Card className="p-5 lg:col-span-2 space-y-4">
-                <div>
-                  <h3 className="font-semibold text-lg">{selectedP.name}</h3>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
-                    <MapPin className="size-3.5" />{selectedP.city}
-                    <span>·</span>
-                    <Star className="size-3.5 text-yellow-500" />{selectedDetails.rating}
-                    <span>·</span>
-                    <span>{selectedDetails.category}</span>
-                    <span>·</span>
-                    <span>Since {selectedDetails.yearOpened}</span>
-                  </div>
+          {authed && !isHotelAdmin ? (
+            <Card className="p-10 text-center text-sm text-muted-foreground flex flex-col items-center gap-2">
+              <Lock className="size-6 text-muted-foreground/70" /> Restricted to the hotel admin.
+            </Card>
+          ) : liveBranches.length === 0 ? (
+            <Card className="p-10 text-center text-sm text-muted-foreground">No properties yet — add one in the Branches tab.</Card>
+          ) : (
+            <>
+              <div className="flex gap-2 mb-4 flex-wrap">
+                {liveBranches.map((b) => (
+                  <button key={b.id} onClick={() => setSelectedProperty(b.id)}
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${(selectedBranch?.id === b.id) ? "bg-secondary text-secondary-foreground border-secondary" : "hover:border-muted-foreground/40"}`}>
+                    {b.name}
+                  </button>
+                ))}
+              </div>
+              {selectedBranch && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <Card className="p-5 lg:col-span-2 space-y-4">
+                    <div>
+                      <h3 className="font-semibold text-lg flex items-center gap-2">
+                        {selectedBranch.name}
+                        {selectedBranch.is_primary && <Badge variant="secondary" className="text-[10px]">Primary</Badge>}
+                        {!selectedBranch.is_active && <Badge variant="outline" className="text-[10px]">Inactive</Badge>}
+                      </h3>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1 flex-wrap">
+                        {selectedBranch.code && <><span className="font-mono">{selectedBranch.code}</span><span>·</span></>}
+                        {selectedBranch.address && <><MapPin className="size-3.5" />{selectedBranch.address}<span>·</span></>}
+                        {selectedBranch.star_rating ? <><Star className="size-3.5 text-yellow-500" />{selectedBranch.star_rating}<span>·</span></> : null}
+                        <span>Since {new Date(selectedBranch.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="border rounded-lg p-3 text-center">
+                        <div className="text-[10px] text-muted-foreground mb-1">Total Rooms</div>
+                        <div className="text-xl font-bold">{selectedBranch.total_rooms ?? "—"}</div>
+                      </div>
+                      <div className="border rounded-lg p-3 text-center">
+                        <div className="text-[10px] text-muted-foreground mb-1">Status</div>
+                        <div className={`text-xl font-bold ${selectedBranch.is_active ? "text-success" : "text-amber-600"}`}>{selectedBranch.is_active ? "Active" : "Suspended"}</div>
+                      </div>
+                      <div className="border rounded-lg p-3 text-center">
+                        <div className="text-[10px] text-muted-foreground mb-1">Currency</div>
+                        <div className="text-xl font-bold">{selectedBranch.currency}</div>
+                      </div>
+                    </div>
+                  </Card>
+                  <Card className="p-5 space-y-4">
+                    <h3 className="font-semibold">Contact</h3>
+                    <div className="space-y-3">
+                      <div>
+                        <div className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="size-3" />Phone</div>
+                        <div className="mt-0.5 text-sm">{selectedBranch.phone || "—"}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground flex items-center gap-1"><Mail className="size-3" />Email</div>
+                        <div className="mt-0.5 text-sm break-all">{selectedBranch.email || "—"}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground flex items-center gap-1"><Building2 className="size-3" />Timezone</div>
+                        <div className="mt-0.5 text-sm">{selectedBranch.timezone}</div>
+                      </div>
+                    </div>
+                    <div className="border-t pt-3 space-y-2">
+                      <Button size="sm" className="w-full" onClick={() => { setProperty(selectedBranch.id); toast.success(`Switched to ${selectedBranch.name}`); }}>
+                        Switch to this property
+                      </Button>
+                      <Button size="sm" variant="outline" className="w-full gap-1.5" onClick={() => openEdit(selectedBranch)}>
+                        <Pencil className="size-3.5" /> Edit property
+                      </Button>
+                    </div>
+                  </Card>
                 </div>
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-2">Amenities</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedDetails.amenities.map((a) => (
-                      <Badge key={a} variant="secondary" className="text-xs gap-1">
-                        <Coffee className="size-2.5" />{a}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="border rounded-lg p-3 text-center">
-                    <div className="text-[10px] text-muted-foreground mb-1">Total Rooms</div>
-                    <div className="text-xl font-bold">{selectedP.rooms}</div>
-                  </div>
-                  <div className="border rounded-lg p-3 text-center">
-                    <div className="text-[10px] text-muted-foreground mb-1">Occupancy</div>
-                    <div className="text-xl font-bold text-info">{selectedP.occupancy}%</div>
-                  </div>
-                  <div className="border rounded-lg p-3 text-center">
-                    <div className="text-[10px] text-muted-foreground mb-1">ADR</div>
-                    <div className="text-xl font-bold text-success">{fmtINR(selectedP.adr)}</div>
-                  </div>
-                </div>
-              </Card>
-              <Card className="p-5 space-y-4">
-                <h3 className="font-semibold">Contacts</h3>
-                <div className="space-y-3">
-                  <div>
-                    <div className="text-xs text-muted-foreground">General Manager</div>
-                    <div className="font-medium mt-0.5">{selectedDetails.contact.gm}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="size-3" />Phone</div>
-                    <div className="mt-0.5 text-sm">{selectedDetails.contact.phone}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground flex items-center gap-1"><Mail className="size-3" />Email</div>
-                    <div className="mt-0.5 text-sm break-all">{selectedDetails.contact.email}</div>
-                  </div>
-                </div>
-                <div className="border-t pt-3 space-y-2">
-                  <Button size="sm" className="w-full" onClick={() => { setProperty(selectedP.id); toast.success(`Switched to ${selectedP.name}`); }}>
-                    Switch to this property
-                  </Button>
-                  <Button size="sm" variant="outline" className="w-full" onClick={() => toast.info("Opening property settings")}>
-                    Property Settings
-                  </Button>
-                </div>
-              </Card>
-            </div>
+              )}
+            </>
           )}
         </TabsContent>
 
@@ -421,13 +422,16 @@ function Properties() {
                   </tr>
                 </thead>
                 <tbody>
-                  {propertyRooms.slice(0, 15).map((r) => (
+                  {(roomsLive
+                    ? liveRooms.map((r) => ({ id: r.id, number: r.room_number, type: r.room_type, status: r.status, floor: r.floor, capacity: r.capacity, rate: r.price_per_night }))
+                    : rooms.map((r) => ({ id: r.id, number: r.number, type: r.type, status: r.status, floor: r.floor, capacity: r.capacity, rate: r.rate }))
+                  ).slice(0, 15).map((r) => (
                     <tr key={r.id} className="border-b last:border-0 hover:bg-accent/5">
                       <td className="px-4 py-3 font-mono text-xs font-medium">{r.number}</td>
                       <td className="px-4 py-3"><Badge variant="outline" className="text-xs">{r.type}</Badge></td>
                       <td className="px-4 py-3">
-                        <Badge className={`text-[10px] ${r.status === "occupied" ? "bg-info/15 text-info border-info/30" : r.status === "vacant_clean" ? "bg-success/15 text-success border-success/30" : r.status === "maintenance" ? "bg-destructive/15 text-destructive" : "bg-warning/15 text-warning-foreground"}`}>
-                          {r.status.replace("_", " ")}
+                        <Badge className={`text-[10px] ${r.status === "occupied" ? "bg-info/15 text-info border-info/30" : r.status === "vacant_clean" || r.status === "available" ? "bg-success/15 text-success border-success/30" : r.status === "maintenance" ? "bg-destructive/15 text-destructive" : "bg-warning/15 text-warning-foreground"}`}>
+                          {String(r.status).replace("_", " ")}
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{r.floor}</td>
@@ -435,6 +439,9 @@ function Properties() {
                       <td className="px-4 py-3 font-medium">{fmtINR(r.rate)}</td>
                     </tr>
                   ))}
+                  {roomsLive && liveRooms.length === 0 && (
+                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No rooms yet.</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
