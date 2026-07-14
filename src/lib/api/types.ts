@@ -709,3 +709,17 @@ export interface Branch {
   is_primary: boolean;
   created_at: string;
 }
+
+// CRM marketing campaigns (/api/crm/campaigns)
+export interface Campaign {
+  id: string;
+  name: string;
+  audience: string;
+  channel: string;
+  status: string;
+  sent: number;
+  opens: number;
+  clicks: number;
+  revenue: number;
+  created_at: string;
+}

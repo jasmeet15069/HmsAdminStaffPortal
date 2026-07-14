@@ -29,6 +29,7 @@ import type {
   DashboardData,
   DashboardStats,
   GuestDetail,
+  Campaign,
   Guest,
   HousekeepingTask,
   InventoryItem,
@@ -643,6 +644,36 @@ export function useLoyaltyTiers() {
     queryFn: () =>
       apiFetch<LoyaltyTier[] | null>("/api/crm/loyalty/tiers").then((t) => t ?? []),
     enabled: isAuthenticated(),
+  });
+}
+
+export function useCampaigns() {
+  return useQuery({
+    queryKey: ["crm", "campaigns"] as const,
+    queryFn: () => apiFetch<Campaign[] | null>("/api/crm/campaigns").then((c) => c ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+export function useCreateCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<Campaign>) => apiFetch("/api/crm/campaigns", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["crm", "campaigns"] }),
+  });
+}
+export function useUpdateCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<Campaign> }) =>
+      apiFetch(`/api/crm/campaigns/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["crm", "campaigns"] }),
+  });
+}
+export function useDeleteCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/crm/campaigns/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["crm", "campaigns"] }),
   });
 }
 

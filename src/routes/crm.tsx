@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useGuests, useLoyaltyTiers, useCreateLoyaltyTier, useLoyaltyMembers } from "@/lib/api/hooks";
+import { useGuests, useLoyaltyTiers, useCreateLoyaltyTier, useLoyaltyMembers, useCampaigns, useCreateCampaign, useUpdateCampaign, useDeleteCampaign } from "@/lib/api/hooks";
+import type { Campaign } from "@/lib/api/types";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -13,7 +14,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, PieChart, Pie, Cell, Legend } from "recharts";
-import { Star, Search, Plus, Send, Users, Gift, TrendingUp, Loader2 } from "lucide-react";
+import { Star, Search, Plus, Send, Users, Gift, TrendingUp, Loader2, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -55,6 +56,31 @@ function CRM() {
   const [tierFilter, setTierFilter] = useState("All");
   const [selectedGuest, setSelectedGuest] = useState<GuestRow | null>(null);
   const [newCampaignOpen, setNewCampaignOpen] = useState(false);
+  const campaignsQ = useCampaigns();
+  const createCampaignM = useCreateCampaign();
+  const updateCampaignM = useUpdateCampaign();
+  const deleteCampaignM = useDeleteCampaign();
+  const campaignsLive = authed && !!campaignsQ.data;
+  const [newCampaign, setNewCampaign] = useState({ name: "", audience: "All guests", channel: "email" });
+  const displayCampaigns = campaignsLive && campaignsQ.data
+    ? campaignsQ.data.map((c: Campaign) => ({ id: c.id, name: c.name, audience: c.audience || "All guests", sent: c.sent, opens: c.opens, clicks: c.clicks, revenue: c.revenue, status: c.status, _live: true }))
+    : CAMPAIGNS.map((c) => ({ ...c, _live: false }));
+
+  const handleCreateCampaign = () => {
+    if (!newCampaign.name.trim()) return;
+    createCampaignM.mutate(
+      { name: newCampaign.name.trim(), audience: newCampaign.audience, channel: newCampaign.channel, status: "draft" } as Partial<Campaign>,
+      { onSuccess: () => { setNewCampaignOpen(false); setNewCampaign({ name: "", audience: "All guests", channel: "email" }); toast.success("Campaign created"); }, onError: (e: any) => toast.error(e?.message ?? "Failed to create campaign") },
+    );
+  };
+  const launchCampaign = (c: typeof displayCampaigns[0]) => {
+    if (!c._live) { toast.success(`Campaign "${c.name}" launched`); return; }
+    updateCampaignM.mutate({ id: c.id, patch: { status: "active" } }, { onSuccess: () => toast.success(`"${c.name}" launched`), onError: () => toast.error("Failed to launch") });
+  };
+  const removeCampaign = (c: typeof displayCampaigns[0]) => {
+    if (!c._live) return;
+    deleteCampaignM.mutate(c.id, { onSuccess: () => toast.success("Campaign deleted"), onError: () => toast.error("Failed to delete") });
+  };
   const [newTierOpen, setNewTierOpen] = useState(false);
   const [newTier, setNewTier] = useState({ name: "", min_points: "0", multiplier: "1", benefits: "" });
 
@@ -322,18 +348,21 @@ function CRM() {
         {/* Campaigns */}
         <TabsContent value="campaigns">
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {CAMPAIGNS.map((c) => (
+            {displayCampaigns.map((c) => {
+              const isDraft = String(c.status).toLowerCase() === "draft";
+              const done = c.sent > 0 || String(c.status).toLowerCase() === "completed";
+              return (
               <Card key={c.id} className="p-4">
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <div className="font-semibold text-sm">{c.name}</div>
                     <div className="text-xs text-muted-foreground">{c.audience}</div>
                   </div>
-                  <Badge className={`text-[10px] ${c.status === "Completed" ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>
+                  <Badge className={`text-[10px] capitalize ${done ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>
                     {c.status}
                   </Badge>
                 </div>
-                {c.status === "Completed" && (
+                {done && (
                   <div className="grid grid-cols-3 gap-2 text-center mb-3">
                     <div className="bg-muted/50 rounded p-1.5">
                       <div className="text-[10px] text-muted-foreground">Sent</div>
@@ -350,14 +379,16 @@ function CRM() {
                   </div>
                 )}
                 <div className="flex gap-1.5">
-                  {c.status === "Draft" ? (
-                    <Button size="sm" className="flex-1 h-7 gap-1" onClick={() => toast.success(`Campaign "${c.name}" launched`)}><Send className="size-3" />Launch</Button>
-                  ) : (
-                    <Button size="sm" variant="outline" className="flex-1 h-7" onClick={() => toast.info("Duplicating campaign")}>Duplicate</Button>
+                  {isDraft && (
+                    <Button size="sm" className="flex-1 h-7 gap-1" disabled={updateCampaignM.isPending} onClick={() => launchCampaign(c)}><Send className="size-3" />Launch</Button>
+                  )}
+                  {c._live && (
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-destructive hover:text-destructive" disabled={deleteCampaignM.isPending} onClick={() => removeCampaign(c)}><Trash2 className="size-3.5" /></Button>
                   )}
                 </div>
               </Card>
-            ))}
+              );
+            })}
             <Card className="p-4 border-dashed cursor-pointer hover:border-primary/50 transition-colors flex flex-col items-center justify-center min-h-[140px] text-muted-foreground" onClick={() => setNewCampaignOpen(true)}>
               <Plus className="size-8 mb-1 opacity-40" />
               <span className="text-sm">New Campaign</span>
@@ -481,20 +512,30 @@ function CRM() {
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>New Campaign</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div><Label className="text-xs">Campaign Name</Label><Input className="h-8 mt-1" placeholder="e.g. Festive Season Offer" /></div>
+            <div><Label className="text-xs">Campaign Name</Label><Input className="h-8 mt-1" placeholder="e.g. Festive Season Offer" value={newCampaign.name} onChange={(e) => setNewCampaign((p) => ({ ...p, name: e.target.value }))} /></div>
             <div>
               <Label className="text-xs">Target Audience</Label>
-              <Select defaultValue="All guests">
+              <Select value={newCampaign.audience} onValueChange={(v) => setNewCampaign((p) => ({ ...p, audience: v }))}>
                 <SelectTrigger className="h-8 mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {["All guests", "Platinum only", "Gold + Platinum", "Standard only", "VIP guests", "Corporate accounts"].map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            <div><Label className="text-xs">Subject Line</Label><Input className="h-8 mt-1" placeholder="e.g. Exclusive offer for valued guests" /></div>
+            <div>
+              <Label className="text-xs">Channel</Label>
+              <Select value={newCampaign.channel} onValueChange={(v) => setNewCampaign((p) => ({ ...p, channel: v }))}>
+                <SelectTrigger className="h-8 mt-1"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["email", "sms", "whatsapp"].map((a) => <SelectItem key={a} value={a} className="capitalize">{a}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex gap-2 pt-1">
-              <Button variant="outline" className="flex-1" onClick={() => setNewCampaignOpen(false)}>Save Draft</Button>
-              <Button className="flex-1" onClick={() => { toast.success("Campaign created"); setNewCampaignOpen(false); }}>Create</Button>
+              <Button variant="outline" className="flex-1" onClick={() => setNewCampaignOpen(false)}>Cancel</Button>
+              <Button className="flex-1" disabled={createCampaignM.isPending || !newCampaign.name.trim()} onClick={handleCreateCampaign}>
+                {createCampaignM.isPending && <Loader2 className="size-4 mr-1.5 animate-spin" />} Create
+              </Button>
             </div>
           </div>
         </DialogContent>
