@@ -18,6 +18,7 @@ import { useState, useMemo } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/api/auth";
 import { useInventoryItems, useUpdateInventoryItem, useCreateInventoryItem, useDeleteInventoryItem } from "@/lib/api/hooks";
+import { downloadCSV } from "@/lib/csv";
 
 type Movement = { id: string; sku: string; name: string; type: "In" | "Out" | "Adjustment"; qty: number; reason: string; by: string; date: string };
 
@@ -136,7 +137,13 @@ function Inventory() {
         description="Track stock, manage reorders, and view movements"
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => toast.success("Report exported")} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => {
+              downloadCSV("inventory.csv", filtered.map((i) => ({
+                sku: i.sku, name: i.name, category: i.category, stock: i.stock,
+                reorder_level: i.reorderLevel, unit: i.unit, unit_cost: i.unitCost, supplier: i.supplier,
+              })));
+              toast.success(`Exported ${filtered.length} items`);
+            }} className="gap-1.5">
               <Download className="size-4" /> Export
             </Button>
             <Button size="sm" onClick={() => setNewOpen(true)} className="gap-1.5">

@@ -13,6 +13,7 @@ import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGri
 import { Plus, Download, Printer, Search, Receipt, CreditCard, FileText, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
+import { downloadCSV } from "@/lib/csv";
 import {
   useBillingFolios,
   useBillingFolioDetail,
@@ -475,7 +476,13 @@ function Billing() {
                   <h3 className="font-semibold">Accounts Receivable Aging</h3>
                   <p className="text-xs text-muted-foreground mt-0.5">{aging.length} folios with outstanding balance</p>
                 </div>
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => toast.success("AR aging report exported")}>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => {
+                  downloadCSV("ar-aging.csv", aging.map((f) => ({
+                    folio: f.id, guest: f.guest_name, room: f.room_number,
+                    charges: f.total_charges, paid: f.total_paid, balance: f.balance,
+                  })));
+                  toast.success(`Exported ${aging.length} folios`);
+                }}>
                   <Download className="size-4" />Export
                 </Button>
               </div>

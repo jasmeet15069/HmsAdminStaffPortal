@@ -3,6 +3,7 @@ import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
 import { useVendors, usePurchaseOrders, useCreatePurchaseOrder, useUpdatePOStatus, useCreateVendor } from "@/lib/api/hooks";
+import { downloadCSV } from "@/lib/csv";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -143,7 +144,13 @@ function Procurement() {
         actions={
           <>
             <Badge variant={isLive ? "default" : "outline"} className="self-center">{isLive ? "Live" : "Demo"}</Badge>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast.success("Export ready")}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => {
+              downloadCSV("purchase-orders.csv", filtered.map((po: any) => ({
+                po: po.po_number ?? po.id, vendor: po.vendor ?? po.vendor_name ?? "", status: po.status,
+                total: po.total ?? po.total_amount ?? 0, date: po.created_at ?? po.date ?? "",
+              })));
+              toast.success(`Exported ${filtered.length} POs`);
+            }}>
               <Download className="size-4" /> Export
             </Button>
             <Button size="sm" className="gap-1.5" onClick={() => setNewOpen(true)}>
