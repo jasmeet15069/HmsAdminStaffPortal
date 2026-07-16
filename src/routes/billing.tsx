@@ -13,7 +13,36 @@ import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGri
 import { Plus, Download, Printer, Search, Receipt, CreditCard, FileText, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
-import { downloadCSV } from "@/lib/csv";
+import { downloadCSV, printHTML } from "@/lib/csv";
+
+// Render a folio/invoice as printable HTML (the browser print dialog lets the user
+// save it as PDF or send to a printer) — real replacement for the fake toasts.
+function folioInvoiceHTML(d: any): string {
+  const esc = (v: unknown) => String(v ?? "").replace(/[&<>]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[m]!));
+  const money = (n: number) => (n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2 });
+  const charges = (d.charges ?? []).map((c: any) => `<tr><td>${esc(c.description)}</td><td style="text-align:right">${money(c.amount)}</td><td style="text-align:right">${money(c.tax_amount)}</td></tr>`).join("");
+  const payments = (d.payments ?? []).map((p: any) => `<tr><td>${esc(p.payment_number || p.method)}</td><td>${esc(p.method)}</td><td style="text-align:right">${money(p.amount)}</td></tr>`).join("");
+  return `
+    <div style="font-family:system-ui,sans-serif;max-width:720px;margin:0 auto">
+      <h2 style="margin:0 0 4px">Invoice / Folio</h2>
+      <div style="color:#666;font-size:13px;margin-bottom:16px">
+        <div><b>Guest:</b> ${esc(d.guest_name || "—")}</div>
+        <div><b>Room:</b> ${esc(d.room_number || "—")}</div>
+        <div><b>Folio:</b> ${esc(d.id || "")}</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px">
+        <thead><tr style="border-bottom:2px solid #333"><th style="text-align:left">Charge</th><th style="text-align:right">Amount</th><th style="text-align:right">Tax</th></tr></thead>
+        <tbody>${charges || `<tr><td colspan="3" style="color:#999">No charges</td></tr>`}</tbody>
+      </table>
+      ${payments ? `<h4 style="margin:0 0 6px">Payments</h4><table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px"><tbody>${payments}</tbody></table>` : ""}
+      <table style="width:100%;font-size:14px;border-top:2px solid #333;padding-top:8px">
+        <tr><td>Total charges</td><td style="text-align:right">${money(d.total_charges)}</td></tr>
+        <tr><td>Tax</td><td style="text-align:right">${money(d.total_tax)}</td></tr>
+        <tr><td>Paid</td><td style="text-align:right">${money(d.total_paid)}</td></tr>
+        <tr style="font-weight:700;font-size:16px"><td>Balance due</td><td style="text-align:right">${money(d.balance)}</td></tr>
+      </table>
+    </div>`;
+}
 import {
   useBillingFolios,
   useBillingFolioDetail,
@@ -148,10 +177,10 @@ function Billing() {
                       </p>
                     </div>
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast.success("PDF downloaded")}>
+                      <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { printHTML(`Invoice — ${d.guest_name || "Folio"}`, folioInvoiceHTML(d)); }}>
                         <Download className="size-3.5" />PDF
                       </Button>
-                      <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast.success("Sent to printer")}>
+                      <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { printHTML(`Invoice — ${d.guest_name || "Folio"}`, folioInvoiceHTML(d)); }}>
                         <Printer className="size-3.5" />Print
                       </Button>
                     </div>
@@ -440,7 +469,7 @@ function Billing() {
                       <td className="px-4 py-3 font-semibold">{fmtINR(inv.total)}</td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
-                          <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" onClick={() => toast.success("Invoice downloaded")}>
+                          <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" onClick={() => printHTML(`Invoice ${inv.invoice_number}`, folioInvoiceHTML({ id: inv.invoice_number, guest_name: inv.guest_name, total_charges: inv.subtotal, total_tax: inv.tax_total, total_paid: inv.status === "paid" ? inv.total : 0, balance: inv.status === "paid" ? 0 : inv.total }))}>
                             <Download className="size-3" />PDF
                           </Button>
                           {inv.status === "draft" && (

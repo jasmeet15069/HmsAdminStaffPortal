@@ -1,6 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
+import { useAuth } from "@/lib/api/auth";
+import { useRestaurantTables, useWaitlist, useAddWaitlist, useUpdateWaitlist, useDeleteWaitlist } from "@/lib/api/hooks";
+import { apiFetch } from "@/lib/api/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -134,11 +137,67 @@ const BLANK_WAITLIST = { name: "", size: "2", phone: "" };
 // ── Component ─────────────────────────────────────────────────────────────────
 function RestaurantPage() {
   const { orders, menuItems } = useMHMS();
+  const authed = !!useAuth((s) => s.user);
+  const tablesQ = useRestaurantTables();
+  const waitlistQ = useWaitlist();
+  const addWLM = useAddWaitlist();
+  const updateWLM = useUpdateWaitlist();
+  const deleteWLM = useDeleteWaitlist();
 
-  const [floor, setFloor] = useState<FloorTable[]>(INITIAL_FLOOR);
+  const tablesLive = authed && !!tablesQ.data && tablesQ.data.length > 0;
+  const waitlistLive = authed && !!waitlistQ.data;
+
+  const [localFloor, setFloor] = useState<FloorTable[]>(INITIAL_FLOOR);
+  const [localWaitlist, setWaitlist] = useState<WaitlistEntry[]>(INITIAL_WAITLIST);
+
+  // Real floor tables from /api/pos/tables when live (status/section/seats); the
+  // rich per-table order info (covers/total/elapsed) is only present for demo tables.
+  const floor: FloorTable[] = tablesLive && tablesQ.data
+    ? tablesQ.data.map((t: any): FloorTable => ({
+        id: t.id,
+        label: t.table_number,
+        section: (t.section as Section) || "Main Dining",
+        seats: t.seats ?? 2,
+        status: (t.status as TableStatus) || "available",
+      }))
+    : localFloor;
+
+  const waitlist: WaitlistEntry[] = waitlistLive && waitlistQ.data
+    ? waitlistQ.data.map((w: any): WaitlistEntry => ({
+        id: w.id,
+        name: w.name,
+        size: w.party_size ?? 2,
+        phone: w.phone ?? "",
+        addedAt: w.created_at ? new Date(w.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "",
+        waitMins: w.quoted_wait ?? 0,
+        status: w.status === "notified" ? "Notified" : w.status === "seated" ? "Seated" : w.status === "left" ? "Left" : "Waiting",
+      }))
+    : localWaitlist;
+
+  // Change a real table's status (or local demo state).
+  const setTableStatus = (t: FloorTable, status: TableStatus) => {
+    if (tablesLive) {
+      apiFetch(`/api/pos/tables/${t.id}`, { method: "PATCH", body: { status } })
+        .then(() => tablesQ.refetch())
+        .catch((e: any) => toast.error(e?.message ?? "Failed to update table"));
+    } else {
+      setFloor((p) => p.map((x) => x.id === t.id ? { ...x, status } : x));
+    }
+    toast.success(`${t.label} → ${STATUS_META[status].label}`);
+  };
+
+  const setWaitlistStatus = (w: WaitlistEntry, status: "notified" | "seated" | "left") => {
+    if (waitlistLive) {
+      if (status === "left") deleteWLM.mutate(w.id, { onError: () => toast.error("Failed") });
+      else updateWLM.mutate({ id: w.id, patch: { status } }, { onError: () => toast.error("Failed") });
+    } else {
+      setWaitlist((p) => status === "left" ? p.filter((x) => x.id !== w.id) : p.map((x) => x.id === w.id ? { ...x, status: status === "notified" ? "Notified" : "Seated" } as WaitlistEntry : x));
+    }
+    toast.success(`${w.name} ${status === "notified" ? "notified" : status === "seated" ? "seated" : "removed"}`);
+  };
+
   const [sectionFilter, setSectionFilter] = useState<Section | "All">("All");
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
-  const [waitlist, setWaitlist] = useState<WaitlistEntry[]>(INITIAL_WAITLIST);
   const [addWLOpen, setAddWLOpen] = useState(false);
   const [newWL, setNewWL] = useState({ ...BLANK_WAITLIST });
   const [checklist, setChecklist] = useState<Record<string, boolean>>({});
@@ -321,7 +380,7 @@ function RestaurantPage() {
               <div className="flex gap-2 flex-wrap items-center">
                 {(["available", "occupied", "reserved", "cleaning", "blocked"] as TableStatus[]).map((s) => (
                   <Button key={s} size="sm" variant={selectedT.status === s ? "default" : "outline"}
-                    onClick={() => { setFloor((p) => p.map((t) => t.id === selectedT.id ? { ...t, status: s } : t)); toast.success(`${selectedT.label} → ${STATUS_META[s].label}`); }}>
+                    onClick={() => setTableStatus(selectedT, s)}>
                     {STATUS_META[s].label}
                   </Button>
                 ))}
@@ -534,16 +593,16 @@ function RestaurantPage() {
                   <div className="flex gap-1.5 shrink-0">
                     {w.status === "Waiting" && (
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
-                        onClick={() => { setWaitlist((p) => p.map((x) => x.id === w.id ? { ...x, status: "Notified" } : x)); toast.success(`${w.name} notified`); }}>
+                        onClick={() => setWaitlistStatus(w, "notified")}>
                         <AlertCircle className="size-3" />Notify
                       </Button>
                     )}
                     <Button size="sm" className="h-7 text-xs gap-1"
-                      onClick={() => { setWaitlist((p) => p.map((x) => x.id === w.id ? { ...x, status: "Seated" } : x)); toast.success(`${w.name} seated`); }}>
+                      onClick={() => setWaitlistStatus(w, "seated")}>
                       <CheckCircle2 className="size-3" />Seat
                     </Button>
                     <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive"
-                      onClick={() => { setWaitlist((p) => p.map((x) => x.id === w.id ? { ...x, status: "Left" } : x)); toast.success(`${w.name} removed from waitlist`); }}>
+                      onClick={() => setWaitlistStatus(w, "left")}>
                       <X className="size-3" />
                     </Button>
                   </div>
@@ -740,12 +799,20 @@ function RestaurantPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddWLOpen(false)}>Cancel</Button>
-            <Button disabled={!newWL.name.trim()}
+            <Button disabled={!newWL.name.trim() || addWLM.isPending}
               onClick={() => {
-                setWaitlist((p) => [...p, { id: `wl${Date.now()}`, name: newWL.name.trim(), size: Number(newWL.size) || 2, phone: newWL.phone, addedAt: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }), waitMins: 0, status: "Waiting" }]);
-                toast.success(`${newWL.name} added to waitlist`);
-                setAddWLOpen(false);
-                setNewWL({ ...BLANK_WAITLIST });
+                const name = newWL.name.trim();
+                if (waitlistLive) {
+                  addWLM.mutate(
+                    { name, party_size: Number(newWL.size) || 2, phone: newWL.phone },
+                    { onSuccess: () => { toast.success(`${name} added to waitlist`); setAddWLOpen(false); setNewWL({ ...BLANK_WAITLIST }); }, onError: (e: any) => toast.error(e?.message ?? "Failed to add") },
+                  );
+                } else {
+                  setWaitlist((p) => [...p, { id: `wl${Date.now()}`, name, size: Number(newWL.size) || 2, phone: newWL.phone, addedAt: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }), waitMins: 0, status: "Waiting" }]);
+                  toast.success(`${name} added to waitlist`);
+                  setAddWLOpen(false);
+                  setNewWL({ ...BLANK_WAITLIST });
+                }
               }}>
               Add Guest
             </Button>

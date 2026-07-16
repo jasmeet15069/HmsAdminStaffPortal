@@ -647,6 +647,45 @@ export function useLoyaltyTiers() {
   });
 }
 
+// Restaurant floor tables (/api/pos/tables) + waitlist (/api/pos/waitlist).
+export function useRestaurantTables() {
+  return useQuery({
+    queryKey: ["pos", "tables"] as const,
+    queryFn: () => apiFetch<any[] | null>("/api/pos/tables").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+export function useWaitlist() {
+  return useQuery({
+    queryKey: ["pos", "waitlist"] as const,
+    queryFn: () => apiFetch<any[] | null>("/api/pos/waitlist").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+export function useAddWaitlist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { name: string; party_size: number; section?: string; phone?: string; quoted_wait?: number }) =>
+      apiFetch("/api/pos/waitlist", { method: "POST", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pos", "waitlist"] }),
+  });
+}
+export function useUpdateWaitlist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: { status?: string; section?: string } }) =>
+      apiFetch(`/api/pos/waitlist/${id}`, { method: "PATCH", body: patch }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pos", "waitlist"] }),
+  });
+}
+export function useDeleteWaitlist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/pos/waitlist/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pos", "waitlist"] }),
+  });
+}
+
 export function useCampaigns() {
   return useQuery({
     queryKey: ["crm", "campaigns"] as const,
