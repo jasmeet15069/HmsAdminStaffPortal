@@ -647,6 +647,56 @@ export function useLoyaltyTiers() {
   });
 }
 
+// System Admin: API keys + integrations (/api/admin/*).
+export function useAPIKeys() {
+  return useQuery({
+    queryKey: ["admin", "api-keys"] as const,
+    queryFn: () => apiFetch<any[] | null>("/api/admin/api-keys").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+export function useCreateAPIKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => apiFetch<{ id: string; key: string }>("/api/admin/api-keys", { method: "POST", body: { name } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "api-keys"] }),
+  });
+}
+export function useUpdateAPIKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) => apiFetch(`/api/admin/api-keys/${id}`, { method: "PATCH", body: { is_active } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "api-keys"] }),
+  });
+}
+export function useDeleteAPIKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch(`/api/admin/api-keys/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "api-keys"] }),
+  });
+}
+export function useIntegrations() {
+  return useQuery({
+    queryKey: ["admin", "integrations"] as const,
+    queryFn: () => apiFetch<any[] | null>("/api/admin/integrations").then((d) => d ?? []),
+    enabled: isAuthenticated(),
+  });
+}
+export function useUpsertIntegration() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ provider, body }: { provider: string; body: { category?: string; is_enabled?: boolean; config?: any } }) =>
+      apiFetch(`/api/admin/integrations/${provider}`, { method: "PATCH", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "integrations"] }),
+  });
+}
+export function useTestIntegration() {
+  return useMutation({
+    mutationFn: (provider: string) => apiFetch<{ ok: boolean; message: string }>(`/api/admin/integrations/${provider}/test`, { method: "POST" }),
+  });
+}
+
 // Restaurant floor tables (/api/pos/tables) + waitlist (/api/pos/waitlist).
 export function useRestaurantTables() {
   return useQuery({

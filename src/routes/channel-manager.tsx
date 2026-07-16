@@ -9,6 +9,7 @@ import { BarChart, Bar, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGri
 import { Globe2, RefreshCw, AlertTriangle, CheckCircle2, Clock, TrendingUp, Settings, Plus, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api/client";
 import { fmtINR } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
 import { useChannelConnections, useCreateChannelConnection, useUpdateChannelConnection, useDeleteChannelConnection, useChannelAnalytics } from "@/lib/api/hooks";
@@ -230,7 +231,11 @@ function ChannelManager() {
                 <h3 className="font-semibold">Rate Parity Check</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">Tonight's rates. Highlighted = above direct BAR rate.</p>
               </div>
-              <Button size="sm" variant="outline" onClick={() => toast.success("Rates rechecked")}>
+              <Button size="sm" variant="outline" onClick={() => {
+                apiFetch<{ count: number }>("/api/channel/recheck-parity", { method: "POST" })
+                  .then((r) => toast.success(`Parity rechecked — ${r?.count ?? 0} channel(s) synced`))
+                  .catch((e: any) => toast.error(e?.message ?? "Recheck failed"));
+              }}>
                 <RefreshCw className="size-3.5 mr-1" /> Recheck
               </Button>
             </div>

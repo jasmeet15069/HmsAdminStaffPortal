@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, Legend, AreaChart, Area } from "recharts";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
+import { apiFetch } from "@/lib/api/client";
 import { TrendingUp, TrendingDown, Minus, Plus, Loader2 } from "lucide-react";
 
 const DEMAND_CALENDAR = Array.from({ length: 30 }, (_, i) => {
@@ -164,7 +165,14 @@ function Revenue() {
                   </div>
                 ))}
               </div>
-              <Button className="w-full" onClick={() => toast.success(`Applied ${adjust[0]}% to all room types for next 14 days`)}>
+              <Button className="w-full" onClick={() => {
+                const pct = adjust[0];
+                if (pct === 0) { toast.info("Set a non-zero adjustment first"); return; }
+                if (!window.confirm(`Apply ${pct > 0 ? "+" : ""}${pct}% to ALL room base rates? This updates every room's price.`)) return;
+                apiFetch<{ rooms_affected: number }>("/api/revenue/apply-adjustment", { method: "POST", body: { percent: pct } })
+                  .then((r) => toast.success(`Applied ${pct > 0 ? "+" : ""}${pct}% to ${r?.rooms_affected ?? 0} rooms`))
+                  .catch((e: any) => toast.error(e?.message ?? "Failed to apply"));
+              }}>
                 Apply Rate Adjustment
               </Button>
             </Card>

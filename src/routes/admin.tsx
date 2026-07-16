@@ -13,6 +13,7 @@ import { Database, Mail, ShieldCheck, Webhook, Key, Activity, Copy, RefreshCw, C
 import { useState } from "react";
 import { useAuth } from "@/lib/api/auth";
 import { apiFetch } from "@/lib/api/client";
+import { useAPIKeys, useCreateAPIKey, useUpdateAPIKey, useDeleteAPIKey, useIntegrations, useUpsertIntegration, useTestIntegration } from "@/lib/api/hooks";
 
 const INITIAL_API_KEYS = [
   { id: "k1", name: "Mobile App", key: "mhms_live_eK9x2mN...", created: "2026-01-15", lastUsed: "2 min ago", active: true },
@@ -58,9 +59,44 @@ export const Route = createFileRoute("/admin")({
 });
 
 function Admin() {
-  const authed = !!useAuth((s) => s.user);
+  const user = useAuth((s) => s.user);
+  const authed = !!user;
+  const isHotelAdmin = !!user?.roles?.some((r) => ["hotel_admin", "admin", "super_admin"].includes(r));
   const { auditLog } = useMHMS();
-  const [apiKeys, setApiKeys] = useState(INITIAL_API_KEYS);
+  const [localApiKeys] = useState(INITIAL_API_KEYS);
+
+  const keysQ = useAPIKeys();
+  const createKeyM = useCreateAPIKey();
+  const updateKeyM = useUpdateAPIKey();
+  const deleteKeyM = useDeleteAPIKey();
+  const keysLive = authed && isHotelAdmin && !!keysQ.data;
+  const apiKeys = keysLive && keysQ.data
+    ? keysQ.data.map((k: any) => ({ id: k.id, name: k.name, key: k.key_prefix, created: (k.created_at || "").slice(0, 10), lastUsed: k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : "Never", active: k.is_active }))
+    : localApiKeys;
+  const [revealedKey, setRevealedKey] = useState<{ name: string; key: string } | null>(null);
+
+  const integrationsQ = useIntegrations();
+  const upsertIntM = useUpsertIntegration();
+  const testIntM = useTestIntegration();
+  const intMap: Record<string, any> = {};
+  (integrationsQ.data ?? []).forEach((i: any) => { intMap[i.provider] = i; });
+
+  const generateKey = () => {
+    if (!keysLive) { toast.info("Sign in as a hotel admin to manage real API keys"); return; }
+    const name = window.prompt("Name this API key:", "New integration") || "API key";
+    createKeyM.mutate(name, {
+      onSuccess: (r: any) => { setRevealedKey({ name, key: r.key }); toast.success("API key created"); },
+      onError: (e: any) => toast.error(e?.message ?? "Failed"),
+    });
+  };
+  const toggleKey = (k: any) => { if (keysLive) updateKeyM.mutate({ id: k.id, is_active: !k.active }, { onError: () => toast.error("Failed") }); };
+  const removeKey = (k: any) => { if (keysLive && window.confirm(`Revoke "${k.name}"?`)) deleteKeyM.mutate(k.id, { onSuccess: () => toast.success("Key revoked"), onError: () => toast.error("Failed") }); };
+  const toggleIntegration = (provider: string, category: string, on: boolean) => {
+    upsertIntM.mutate({ provider, body: { category, is_enabled: on } }, { onSuccess: () => toast.success(`${provider} ${on ? "enabled" : "disabled"}`), onError: () => toast.error("Failed") });
+  };
+  const testIntegration = (provider: string) => {
+    testIntM.mutate(provider, { onSuccess: (r: any) => (r?.ok ? toast.success(r.message || "Connected") : toast.error(r?.message || "Not connected")), onError: (e: any) => toast.error(e?.message ?? "Test failed") });
+  };
   const [auditFilter, setAuditFilter] = useState("All");
   const [savingSettings, setSavingSettings] = useState(false);
   const [businessSettings, setBusinessSettings] = useState<Record<string, string>>({});
@@ -162,14 +198,13 @@ function Admin() {
                         <div className="text-xs text-muted-foreground">{item.hint}</div>
                       </div>
                     </div>
-                    <Switch defaultChecked={item.status} onCheckedChange={() => toast.success(`${item.name} toggled`)} />
+                    <Switch defaultChecked={intMap[item.name]?.is_enabled ?? item.status} onCheckedChange={(on) => toggleIntegration(item.name, item.hint.split(" ")[0], on)} />
                   </div>
-                  {item.status && (
+                  {(intMap[item.name]?.is_enabled ?? item.status) && (
                     <div className="mt-3 flex gap-2">
-                      <Button size="sm" variant="outline" className="flex-1 h-7 gap-1" onClick={() => toast.success("Connection tested")}>
+                      <Button size="sm" variant="outline" className="flex-1 h-7 gap-1" disabled={testIntM.isPending} onClick={() => testIntegration(item.name)}>
                         <Activity className="size-3" />Test
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => toast.info("Opening settings")}>Configure</Button>
                     </div>
                   )}
                 </Card>
@@ -182,10 +217,25 @@ function Admin() {
         <TabsContent value="apikeys">
           <div className="flex justify-between items-center mb-3">
             <p className="text-sm text-muted-foreground">{apiKeys.filter((k) => k.active).length} active API keys</p>
-            <Button size="sm" className="gap-1.5" onClick={() => { const k = { id: `k${Date.now()}`, name: "New Key", key: `mhms_live_${Math.random().toString(36).slice(2, 10)}...`, created: new Date().toISOString().slice(0, 10), lastUsed: "Never", active: true }; setApiKeys([...apiKeys, k]); toast.success("API key created"); }}>
+            <Button size="sm" className="gap-1.5" disabled={createKeyM.isPending} onClick={generateKey}>
               <Plus className="size-4" /> Generate Key
             </Button>
           </div>
+          {revealedKey && (
+            <Card className="p-4 mb-3 border-primary/40 bg-primary/5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-medium text-sm">New key — {revealedKey.name}</div>
+                  <div className="font-mono text-xs mt-1 break-all">{revealedKey.key}</div>
+                  <div className="text-[11px] text-muted-foreground mt-1">Shown once — copy it now. Only a hash is stored.</div>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <Button size="sm" variant="outline" className="gap-1" onClick={() => { navigator.clipboard?.writeText(revealedKey.key); toast.success("Copied"); }}><Copy className="size-3" />Copy</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setRevealedKey(null)}>Dismiss</Button>
+                </div>
+              </div>
+            </Card>
+          )}
           <Card>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -204,12 +254,17 @@ function Admin() {
                       <td className="px-4 py-3 text-xs text-muted-foreground">{k.created}</td>
                       <td className="px-4 py-3 text-xs text-muted-foreground">{k.lastUsed}</td>
                       <td className="px-4 py-3">
-                        <Switch checked={k.active} onCheckedChange={(v) => { setApiKeys(apiKeys.map((x) => x.id === k.id ? { ...x, active: v } : x)); toast.success(`Key ${v ? "activated" : "revoked"}`); }} />
+                        <Switch checked={k.active} onCheckedChange={() => toggleKey(k)} />
                       </td>
                       <td className="px-4 py-3">
-                        <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" onClick={() => { navigator.clipboard?.writeText(k.key); toast.success("Copied"); }}>
-                          <Copy className="size-3" />Copy
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="ghost" className="h-7 px-2 gap-1" onClick={() => { navigator.clipboard?.writeText(k.key); toast.success("Prefix copied"); }}>
+                            <Copy className="size-3" />Copy
+                          </Button>
+                          {keysLive && (
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-destructive hover:text-destructive" onClick={() => removeKey(k)}>Revoke</Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
