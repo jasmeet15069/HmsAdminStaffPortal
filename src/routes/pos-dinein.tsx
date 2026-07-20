@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export const Route = createFileRoute("/pos-dinein")({
   head: () => ({ meta: [{ title: "POS Dine-In · MHMS" }] }),
@@ -37,6 +38,7 @@ type SessionDetail = {
   id: string; session_number: string; table_id: string; covers: number; status: string;
   guest_name: string | null; kots: KOT[]; bill: Bill | null;
 };
+type BillSplit = { id: string; split_no: number; customer_name: string; amount: number };
 
 const TABLE_COLORS: Record<string, string> = {
   available: "border-green-600 bg-green-50",
@@ -47,11 +49,11 @@ const TABLE_COLORS: Record<string, string> = {
   out_of_service: "border-red-600 bg-red-50",
 };
 
-async function openInvoice(billId: string) {
+async function openInvoice(billId: string, splitId?: string) {
   const token = getAccessToken();
   let res: Response;
   try {
-    res = await fetch(`/api/pos/bills/${billId}/invoice`, {
+    res = await fetch(`/api/pos/bills/${billId}/invoice${splitId ? `?split=${splitId}` : ""}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) { toast.error("Invoice not available"); return; }
@@ -352,6 +354,31 @@ function BillPanel({ session, onGenerate, generating, onChanged, onClose }: {
   session: SessionDetail; onGenerate: () => void; generating: boolean; onChanged: () => void; onClose: () => void;
 }) {
   const bill = session.bill;
+  const qc = useQueryClient();
+
+  const splitsQ = useQuery({
+    queryKey: ["pos", "splits", bill?.id],
+    queryFn: () => apiFetch<{ enabled: boolean; splits: BillSplit[] }>(`/api/pos/bills/${bill!.id}/splits`),
+    enabled: isAuthenticated() && !!bill,
+  });
+  const splits = splitsQ.data?.splits ?? [];
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [splitNames, setSplitNames] = useState<string[]>(["", ""]);
+  useEffect(() => {
+    if (!splitsQ.data) return;
+    setSplitOpen(splitsQ.data.enabled);
+    if (splitsQ.data.enabled) setSplitNames(splitsQ.data.splits.map((s) => s.customer_name));
+  }, [splitsQ.data]);
+
+  const saveSplits = useMutation({
+    mutationFn: (body: Record<string, unknown>) =>
+      apiFetch(`/api/pos/bills/${bill!.id}/splits`, { method: "PUT", body }),
+    onSuccess: (_d, body) => {
+      qc.invalidateQueries({ queryKey: ["pos", "splits", bill?.id] });
+      toast.success((body as { enabled: boolean }).enabled ? "Bill split saved" : "Split removed");
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Split failed"),
+  });
 
   const patchBill = useMutation({
     mutationFn: (body: Record<string, unknown>) => apiFetch<Bill>(`/api/pos/bills/${bill!.id}`, { method: "PATCH", body }),
@@ -412,6 +439,57 @@ function BillPanel({ session, onGenerate, generating, onChanged, onClose }: {
         {bill.amount_due > 0 && row("Due", bill.amount_due, true)}
       </div>
 
+      {bill.status !== "void" && (
+        <div className="space-y-2 border-t border-border pt-2">
+          <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+            <Checkbox
+              checked={splitOpen}
+              onCheckedChange={(v) => {
+                const on = v === true;
+                setSplitOpen(on);
+                if (!on && (splitsQ.data?.enabled ?? false)) saveSplits.mutate({ enabled: false });
+                if (on && splitNames.length < 2) setSplitNames(["", ""]);
+              }}
+            />
+            Split bill — separate invoice per customer
+          </label>
+          {splitOpen && (
+            <div className="space-y-2">
+              {splitNames.map((n, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Input
+                    value={n}
+                    placeholder={`Customer ${i + 1} name`}
+                    onChange={(e) => setSplitNames((arr) => arr.map((x, j) => (j === i ? e.target.value : x)))}
+                  />
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {fmtINR(bill.total_amount / splitNames.length)}
+                  </span>
+                  {splitNames.length > 2 && (
+                    <button onClick={() => setSplitNames((arr) => arr.filter((_, j) => j !== i))}>
+                      <Trash2 className="size-3.5 text-destructive" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setSplitNames((arr) => [...arr, ""])}>
+                  <Plus className="size-4" /> Add customer
+                </Button>
+                <Button
+                  size="sm"
+                  className="flex-1"
+                  disabled={saveSplits.isPending || splitNames.some((n) => !n.trim())}
+                  onClick={() => saveSplits.mutate({ enabled: true, customers: splitNames.map((n) => ({ name: n.trim() })) })}
+                >
+                  Save Split ({splitNames.length} ways)
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {editable && (
         <div className="space-y-2 border-t border-border pt-2">
           <div className="flex items-end gap-2">
@@ -459,7 +537,20 @@ function BillPanel({ session, onGenerate, generating, onChanged, onClose }: {
 
       {paid && (
         <div className="space-y-2 border-t border-border pt-2">
-          <Button className="w-full gap-1" variant="outline" onClick={() => openInvoice(bill.id)}><Printer className="size-4" /> Print GST Invoice</Button>
+          {splits.length > 0 ? (
+            <>
+              {splits.map((s) => (
+                <Button key={s.id} className="w-full gap-1" variant="outline" onClick={() => openInvoice(bill.id, s.id)}>
+                  <Printer className="size-4" /> Invoice — {s.customer_name} ({fmtINR(s.amount)})
+                </Button>
+              ))}
+              <Button className="w-full gap-1" variant="ghost" onClick={() => openInvoice(bill.id)}>
+                <Printer className="size-4" /> Combined GST Invoice
+              </Button>
+            </>
+          ) : (
+            <Button className="w-full gap-1" variant="outline" onClick={() => openInvoice(bill.id)}><Printer className="size-4" /> Print GST Invoice</Button>
+          )}
           <Button className="w-full gap-1" onClick={onClose}><DoorClosed className="size-4" /> Close Table</Button>
         </div>
       )}
