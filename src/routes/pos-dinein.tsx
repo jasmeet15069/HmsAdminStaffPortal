@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  Plus, Send, ChefHat, Receipt, Printer, DoorClosed, ArrowLeft, Trash2, Wallet,
+  Plus, Send, ChefHat, Receipt, Printer, DoorClosed, ArrowLeft, Trash2, Wallet, Ban,
 } from "lucide-react";
 
 import { PageHeader } from "@/components/AppShell";
@@ -26,7 +26,7 @@ export const Route = createFileRoute("/pos-dinein")({
 
 type Outlet = { id: string; name: string; default_tax_rate: number };
 type TableT = { id: string; outlet_id: string | null; table_number: string; seats: number; status: string; section: string | null };
-type KOTItem = { id: string; item_name: string; quantity: number; unit_price: number; line_total: number; status: string };
+type KOTItem = { id: string; item_name: string; quantity: number; unit_price: number; line_total: number; status: string; void_reason: string | null };
 type KOT = { id: string; kot_number: string; round_no: number; status: string; items: KOTItem[] };
 type Bill = {
   id: string; bill_number: string; status: string; subtotal: number; discount_type: string | null;
@@ -224,7 +224,7 @@ function SessionView({ sessionId, onBack }: { sessionId: string; onBack: () => v
   const s = sessionQ.data;
 
   const sendKOT = useMutation({
-    mutationFn: async (items: { item_name: string; quantity: number; unit_price: number }[]) => {
+    mutationFn: async (items: DraftItem[]) => {
       const kot = await apiFetch<{ id: string }>(`/api/pos/sessions/${sessionId}/kots`, { method: "POST", body: { items } });
       await apiFetch(`/api/pos/kots/${kot.id}/send`, { method: "POST" });
       return kot;
@@ -238,6 +238,13 @@ function SessionView({ sessionId, onBack }: { sessionId: string; onBack: () => v
       apiFetch(`/api/pos/kots/${v.id}/status`, { method: "PATCH", body: { status: v.status } }),
     onSuccess: invalidate,
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Transition not allowed"),
+  });
+
+  const voidItem = useMutation({
+    mutationFn: (v: { kotId: string; itemId: string; reason: string }) =>
+      apiFetch(`/api/pos/kots/${v.kotId}/items/${v.itemId}/void`, { method: "POST", body: { reason: v.reason } }),
+    onSuccess: () => { invalidate(); toast.success("Item voided"); },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Void failed"),
   });
 
   const genBill = useMutation({
@@ -266,7 +273,12 @@ function SessionView({ sessionId, onBack }: { sessionId: string; onBack: () => v
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 space-y-4">
           <OrderEntry onSend={(items) => sendKOT.mutate(items)} pending={sendKOT.isPending} disabled={s.status === "settled" || s.status === "closed"} />
-          <KOTList kots={s.kots} onAdvance={(id, status) => kotStatus.mutate({ id, status })} />
+          <KOTList
+            kots={s.kots}
+            onAdvance={(id, status) => kotStatus.mutate({ id, status })}
+            onVoid={(kotId, itemId, reason) => voidItem.mutate({ kotId, itemId, reason })}
+            voidDisabled={s.status === "settled" || s.status === "closed"}
+          />
         </div>
         <BillPanel
           session={s}
@@ -280,16 +292,19 @@ function SessionView({ sessionId, onBack }: { sessionId: string; onBack: () => v
   );
 }
 
-function OrderEntry({ onSend, pending, disabled }: { onSend: (items: { item_name: string; quantity: number; unit_price: number }[]) => void; pending: boolean; disabled: boolean }) {
-  const [draft, setDraft] = useState<{ item_name: string; quantity: number; unit_price: number }[]>([]);
+type DraftItem = { item_name: string; quantity: number; unit_price: number; hsn_code?: string };
+
+function OrderEntry({ onSend, pending, disabled }: { onSend: (items: DraftItem[]) => void; pending: boolean; disabled: boolean }) {
+  const [draft, setDraft] = useState<DraftItem[]>([]);
   const [name, setName] = useState("");
   const [qty, setQty] = useState(1);
   const [price, setPrice] = useState(0);
+  const [hsn, setHsn] = useState("");
 
   const add = () => {
     if (!name.trim() || price < 0) return;
-    setDraft((d) => [...d, { item_name: name.trim(), quantity: qty, unit_price: price }]);
-    setName(""); setQty(1); setPrice(0);
+    setDraft((d) => [...d, { item_name: name.trim(), quantity: qty, unit_price: price, hsn_code: hsn.trim() || undefined }]);
+    setName(""); setQty(1); setPrice(0); setHsn("");
   };
 
   return (
@@ -299,13 +314,14 @@ function OrderEntry({ onSend, pending, disabled }: { onSend: (items: { item_name
         <div className="space-y-1 flex-1 min-w-40"><Label>Item</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Paneer Tikka" /></div>
         <div className="space-y-1"><Label>Qty</Label><Input type="number" className="w-20" value={qty} onChange={(e) => setQty(Number(e.target.value))} /></div>
         <div className="space-y-1"><Label>Unit ₹</Label><Input type="number" className="w-24" value={price} onChange={(e) => setPrice(Number(e.target.value))} /></div>
+        <div className="space-y-1"><Label>HSN (opt.)</Label><Input className="w-24" value={hsn} onChange={(e) => setHsn(e.target.value)} placeholder="996331" /></div>
         <Button variant="outline" onClick={add} disabled={disabled}>Add</Button>
       </div>
       {draft.length > 0 && (
         <div className="space-y-1">
           {draft.map((it, i) => (
             <div key={i} className="flex items-center justify-between text-sm border-b border-border py-1">
-              <span>{it.quantity} × {it.item_name}</span>
+              <span>{it.quantity} × {it.item_name}{it.hsn_code ? <span className="text-muted-foreground"> · HSN {it.hsn_code}</span> : null}</span>
               <span className="flex items-center gap-2">
                 {fmtINR(it.quantity * it.unit_price)}
                 <button onClick={() => setDraft((d) => d.filter((_, j) => j !== i))}><Trash2 className="size-3.5 text-destructive" /></button>
@@ -321,8 +337,13 @@ function OrderEntry({ onSend, pending, disabled }: { onSend: (items: { item_name
   );
 }
 
-function KOTList({ kots, onAdvance }: { kots: KOT[]; onAdvance: (id: string, status: string) => void }) {
+function KOTList({ kots, onAdvance, onVoid, voidDisabled }: {
+  kots: KOT[]; onAdvance: (id: string, status: string) => void;
+  onVoid: (kotId: string, itemId: string, reason: string) => void; voidDisabled: boolean;
+}) {
   const next: Record<string, string | null> = { sent: "preparing", acknowledged: "preparing", preparing: "ready", ready: "served", draft: null, served: null, cancelled: null };
+  const [voidTarget, setVoidTarget] = useState<{ kotId: string; itemId: string; name: string } | null>(null);
+  const [voidReason, setVoidReason] = useState("");
   if (!kots.length) return <Card className="p-4 text-sm text-muted-foreground">No KOTs yet.</Card>;
   return (
     <Card className="p-4 space-y-3">
@@ -334,7 +355,28 @@ function KOTList({ kots, onAdvance }: { kots: KOT[]; onAdvance: (id: string, sta
             <Badge variant="outline" className="capitalize">{k.status}</Badge>
           </div>
           <div className="mt-2 space-y-0.5 text-sm">
-            {k.items.map((it) => <div key={it.id}>{it.quantity} × {it.item_name} <span className="text-muted-foreground">({fmtINR(it.line_total)})</span></div>)}
+            {k.items.map((it) => (
+              <div key={it.id} className="flex items-center justify-between gap-2">
+                {it.status === "cancelled" ? (
+                  <span className="text-muted-foreground line-through">
+                    {it.quantity} × {it.item_name} ({fmtINR(it.line_total)})
+                    {it.void_reason ? <span className="italic"> — {it.void_reason}</span> : null}
+                  </span>
+                ) : (
+                  <>
+                    <span>{it.quantity} × {it.item_name} <span className="text-muted-foreground">({fmtINR(it.line_total)})</span></span>
+                    {!voidDisabled && (
+                      <button
+                        title="Void item"
+                        onClick={() => { setVoidTarget({ kotId: k.id, itemId: it.id, name: it.item_name }); setVoidReason(""); }}
+                      >
+                        <Ban className="size-3.5 text-destructive" />
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
           </div>
           {next[k.status] && (
             <Button size="sm" variant="outline" className="mt-2 capitalize" onClick={() => onAdvance(k.id, next[k.status]!)}>
@@ -343,6 +385,25 @@ function KOTList({ kots, onAdvance }: { kots: KOT[]; onAdvance: (id: string, sta
           )}
         </div>
       ))}
+
+      <Dialog open={!!voidTarget} onOpenChange={(o) => !o && setVoidTarget(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Void {voidTarget?.name}</DialogTitle></DialogHeader>
+          <div className="space-y-1">
+            <Label>Reason (required)</Label>
+            <Input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} placeholder="Wrong order, guest changed mind..." />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="destructive"
+              disabled={!voidReason.trim()}
+              onClick={() => { if (voidTarget) { onVoid(voidTarget.kotId, voidTarget.itemId, voidReason.trim()); setVoidTarget(null); } }}
+            >
+              Void Item
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
