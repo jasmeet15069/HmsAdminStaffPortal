@@ -189,6 +189,15 @@ export function useCreateSalesInvoice() {
   });
 }
 
+export function useUpdateSalesInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: any }) =>
+      apiFetch(`/api/accounting/sales-invoices/${id}`, { method: "PATCH", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: acctKeys.invoices }),
+  });
+}
+
 export function usePostSalesInvoice() {
   const qc = useQueryClient();
   return useMutation({

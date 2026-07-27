@@ -9,14 +9,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, FileText, Receipt, Package, ListOrdered, Calculator, BookOpen, Users, Building2, Loader2, Eye, CheckCircle2, XCircle, Ban, Trash2 } from "lucide-react";
-import { useState, useMemo } from "react";
+import { Plus, Search, FileText, Receipt, Package, ListOrdered, Calculator, BookOpen, Users, Building2, Loader2, Eye, CheckCircle2, XCircle, Ban, Trash2, Pencil } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
 import { toast } from "sonner";
 import {
   useAccounts, useCreateAccount, useUpdateAccount, useDeleteAccount,
   useCustomers, useCreateCustomer, useUpdateCustomer,
   useVendors, useCreateVendor, useUpdateVendor,
-  useSalesInvoices, useGetSalesInvoice, useCreateSalesInvoice, usePostSalesInvoice, useCancelSalesInvoice, useCreateCreditNoteFromInvoice,
+  useSalesInvoices, useGetSalesInvoice, useCreateSalesInvoice, useUpdateSalesInvoice, usePostSalesInvoice, useCancelSalesInvoice, useCreateCreditNoteFromInvoice,
   useCreditNotes, useCreateCreditNote, usePostCreditNote,
   useDebitNotes, useCreateDebitNote, usePostDebitNote,
   usePurchaseOrders, useCreatePurchaseOrder, useApprovePurchaseOrder,
@@ -475,12 +475,26 @@ function SalesInvoicesTab({ invoices, accounts, customers, isLoading }: { invoic
   const [detailId, setDetailId] = useState<string | null>(null);
   const detailQ = useGetSalesInvoice(detailId);
   const createInv = useCreateSalesInvoice();
+  const updateInv = useUpdateSalesInvoice();
   const postInv = usePostSalesInvoice();
   const cancelInv = useCancelSalesInvoice();
   const creditNoteInv = useCreateCreditNoteFromInvoice();
 
+  const [editId, setEditId] = useState<string | null>(null);
+  const editQ = useGetSalesInvoice(editId);
   const [form, setForm] = useState({ customer_id: "", date: "", due_date: "", reference: "", notes: "" });
   const [lines, setLines] = useState<{ account_id: string; description: string; quantity: number; unit_price: number; discount: number; tax_rate: number }[]>([]);
+
+  const resetForm = () => { setForm({ customer_id: "", date: "", due_date: "", reference: "", notes: "" }); setLines([]); };
+
+  // Load a draft invoice into the form when Edit is clicked (D365: edit only a draft).
+  useEffect(() => {
+    const d = editQ.data;
+    if (!editId || !d) return;
+    setForm({ customer_id: d.customer_id, date: d.invoice_date ?? "", due_date: d.due_date ?? "", reference: d.reference ?? "", notes: d.notes ?? "" });
+    setLines((d.lines ?? []).map((l) => ({ account_id: l.account_id, description: l.description, quantity: l.quantity, unit_price: l.unit_price, discount: l.discount, tax_rate: l.tax_rate })));
+    setCreateOpen(true);
+  }, [editQ.data, editId]);
 
   const filtered = invoices.filter((inv) => {
     const ms = inv.invoice_number.toLowerCase().includes(search.toLowerCase());
@@ -492,10 +506,19 @@ function SalesInvoicesTab({ invoices, accounts, customers, isLoading }: { invoic
   const customerMap = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
+  const closeDialog = () => { setCreateOpen(false); setEditId(null); resetForm(); };
+
   const handleCreate = () => {
     if (!form.customer_id || lines.length === 0) { toast.error("Customer and at least one line required"); return; }
+    if (editId) {
+      updateInv.mutate({ id: editId, body: { ...form, lines } }, {
+        onSuccess: () => { toast.success("Invoice updated"); closeDialog(); },
+        onError: (e: any) => toast.error(e.message ?? "Failed"),
+      });
+      return;
+    }
     createInv.mutate({ ...form, lines }, {
-      onSuccess: () => { toast.success("Invoice created"); setCreateOpen(false); setForm({ customer_id: "", date: "", due_date: "", reference: "", notes: "" }); setLines([]); },
+      onSuccess: () => { toast.success("Invoice created"); closeDialog(); },
       onError: (e: any) => toast.error(e.message ?? "Failed"),
     });
   };
@@ -522,7 +545,7 @@ function SalesInvoicesTab({ invoices, accounts, customers, isLoading }: { invoic
             </button>
           ))}
         </div>
-        <Button size="sm" className="ml-auto gap-1.5" onClick={() => setCreateOpen(true)}><Plus className="size-3.5" /> New Invoice</Button>
+        <Button size="sm" className="ml-auto gap-1.5" onClick={() => { setEditId(null); resetForm(); setCreateOpen(true); }}><Plus className="size-3.5" /> New Invoice</Button>
       </div>
       <Card>
         {isLoading ? <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div> : (
@@ -547,7 +570,12 @@ function SalesInvoicesTab({ invoices, accounts, customers, isLoading }: { invoic
                           <Eye className="size-3.5" />
                         </Button>
                         {inv.status === "draft" && (
-                          <Button size="sm" variant="ghost" className="h-7 px-1.5 text-success" disabled={postInv.isPending}
+                          <Button size="sm" variant="ghost" className="h-7 px-1.5" title="Edit draft" onClick={() => setEditId(inv.id)}>
+                            <Pencil className="size-3.5" />
+                          </Button>
+                        )}
+                        {inv.status === "draft" && (
+                          <Button size="sm" variant="ghost" className="h-7 px-1.5 text-success" title="Post to ledger" disabled={postInv.isPending}
                             onClick={() => postInv.mutate(inv.id, { onSuccess: () => toast.success("Invoice posted"), onError: (e: any) => toast.error(e.message) })}>
                             <CheckCircle2 className="size-3.5" />
                           </Button>
@@ -578,9 +606,9 @@ function SalesInvoicesTab({ invoices, accounts, customers, isLoading }: { invoic
       {detailId && (
         <InvoiceDetailPanel invoiceId={detailId} accountMap={accountMap} onClose={() => setDetailId(null)} />
       )}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={(o) => { if (!o) closeDialog(); else setCreateOpen(true); }}>
         <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>New Sales Invoice</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editId ? "Edit Draft Invoice" : "New Sales Invoice"}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <div><Label className="text-xs">Customer</Label>
@@ -626,8 +654,8 @@ function SalesInvoicesTab({ invoices, accounts, customers, isLoading }: { invoic
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button disabled={createInv.isPending || lines.length === 0} onClick={handleCreate}>{createInv.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Create Invoice"}</Button>
+            <Button variant="outline" onClick={closeDialog}>Cancel</Button>
+            <Button disabled={createInv.isPending || updateInv.isPending || lines.length === 0} onClick={handleCreate}>{(createInv.isPending || updateInv.isPending) ? <Loader2 className="size-3.5 animate-spin" /> : (editId ? "Save Changes" : "Create Invoice")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
