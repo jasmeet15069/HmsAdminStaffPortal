@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  Plus, Send, ChefHat, Receipt, Printer, DoorClosed, ArrowLeft, Trash2, Wallet, Ban,
+  Plus, Send, ChefHat, Receipt, Printer, DoorClosed, ArrowLeft, Trash2, Wallet, Ban, Undo2,
 } from "lucide-react";
 
 import { PageHeader } from "@/components/AppShell";
@@ -456,6 +456,11 @@ function BillPanel({ session, onGenerate, generating, onChanged, onClose }: {
     onSuccess: onChanged,
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Payment failed"),
   });
+  const refund = useMutation({
+    mutationFn: (body: Record<string, unknown>) => apiFetch(`/api/pos/bills/${bill!.id}/refund`, { method: "POST", body }),
+    onSuccess: () => { toast.success("Sale refunded — ledger reversed"); onChanged(); },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Refund failed"),
+  });
 
   const [discount, setDiscount] = useState(0);
   const [tipPct, setTipPct] = useState(0);
@@ -463,6 +468,8 @@ function BillPanel({ session, onGenerate, generating, onChanged, onClose }: {
   const [amount, setAmount] = useState(0);
   const [tendered, setTendered] = useState(0);
   const [ref, setRef] = useState("");
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundReason, setRefundReason] = useState("");
   useEffect(() => { if (bill) setAmount(bill.amount_due); }, [bill]);
 
   if (!bill) {
@@ -613,6 +620,23 @@ function BillPanel({ session, onGenerate, generating, onChanged, onClose }: {
             <Button className="w-full gap-1" variant="outline" onClick={() => openInvoice(bill.id)}><Printer className="size-4" /> Print GST Invoice</Button>
           )}
           <Button className="w-full gap-1" onClick={onClose}><DoorClosed className="size-4" /> Close Table</Button>
+          {!refundOpen ? (
+            <Button variant="ghost" className="w-full gap-1 text-destructive" onClick={() => setRefundOpen(true)}>
+              <Undo2 className="size-4" /> Refund / Reverse Sale
+            </Button>
+          ) : (
+            <div className="space-y-2 border border-destructive/30 rounded-md p-2">
+              <p className="text-xs text-muted-foreground">Posts an equal-and-opposite journal (reverses revenue, GST &amp; COGS) and backs the sale out of revenue. To correct items, refund then raise a fresh bill.</p>
+              <Input placeholder="Reason (optional)" value={refundReason} onChange={(e) => setRefundReason(e.target.value)} />
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => { setRefundOpen(false); setRefundReason(""); }}>Cancel</Button>
+                <Button variant="destructive" className="flex-1" disabled={refund.isPending}
+                  onClick={() => refund.mutate({ reason: refundReason }, { onSuccess: () => { setRefundOpen(false); setRefundReason(""); } })}>
+                  {refund.isPending ? "Refunding…" : "Confirm Refund"}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </Card>
