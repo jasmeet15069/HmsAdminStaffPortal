@@ -1120,6 +1120,30 @@ function GRNTab({ grns, pos, isLoading }: { grns: GRN[]; pos: PurchaseOrder[]; i
 
 // ── Journal Entries ────────────────────────────────────────────────
 
+/**
+ * D365-style voucher chip: the number plus a colour-coded journal type.
+ * Entries posted before voucher numbering existed have no number; they render
+ * as a muted em dash rather than pretending to a voucher they never got.
+ */
+const VOUCHER_TYPE_STYLES: Record<string, string> = {
+  SAL: "bg-success/10 text-success border-success/30",
+  PUR: "bg-info/10 text-info border-info/30",
+  PAY: "bg-warning/10 text-warning border-warning/30",
+  GEN: "bg-muted text-muted-foreground border-border",
+};
+
+function VoucherBadge({ no, type }: { no?: string; type?: string }) {
+  if (!no) return <span className="text-xs text-muted-foreground">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className={`border rounded px-1.5 py-0.5 text-[10px] font-semibold ${VOUCHER_TYPE_STYLES[type ?? "GEN"] ?? VOUCHER_TYPE_STYLES.GEN}`}>
+        {type || "GEN"}
+      </span>
+      <span className="font-mono text-xs">{no}</span>
+    </span>
+  );
+}
+
 function JournalEntriesTab({ journals, accounts, isLoading }: { journals: JournalEntry[]; accounts: Account[]; isLoading: boolean }) {
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -1132,7 +1156,14 @@ function JournalEntriesTab({ journals, accounts, isLoading }: { journals: Journa
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
-  const filtered = journals.filter((j) => j.description.toLowerCase().includes(search.toLowerCase()));
+  // Search spans description, reference and voucher number, so "SAL-000012"
+  // or "BILL-2026…" finds the entry as readily as its description does.
+  const needle = search.toLowerCase();
+  const filtered = journals.filter((j) =>
+    j.description.toLowerCase().includes(needle) ||
+    (j.reference ?? "").toLowerCase().includes(needle) ||
+    (j.voucher_no ?? "").toLowerCase().includes(needle),
+  );
 
   const totals = useMemo(() => {
     let d = 0, c = 0;
@@ -1162,10 +1193,11 @@ function JournalEntriesTab({ journals, accounts, isLoading }: { journals: Journa
         {isLoading ? <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div> : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b">{["Date", "Description", "Reference", "Created", "Actions"].map((h) => (<th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>))}</tr></thead>
+            <thead><tr className="border-b">{["Voucher", "Date", "Description", "Reference", "Created", "Actions"].map((h) => (<th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>))}</tr></thead>
             <tbody>
               {filtered.map((j) => (
                 <tr key={j.id} className="border-b last:border-0 hover:bg-accent/5">
+                  <td className="px-4 py-3"><VoucherBadge no={j.voucher_no} type={j.voucher_type} /></td>
                   <td className="px-4 py-3 text-xs">{j.date}</td>
                   <td className="px-4 py-3">{j.description}</td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">{j.reference || "—"}</td>
@@ -1177,7 +1209,7 @@ function JournalEntriesTab({ journals, accounts, isLoading }: { journals: Journa
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 && <tr><td colSpan={5} className="text-center py-10 text-muted-foreground text-sm">No journal entries</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={6} className="text-center py-10 text-muted-foreground text-sm">No journal entries</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1242,7 +1274,13 @@ function JournalEntryDetailPanel({ entryId, accountMap, onClose }: { entryId: st
   return (
     <Card className="p-4 mt-3">
       <div className="flex items-center justify-between mb-3">
-        <div><h4 className="font-semibold text-sm">{data.description}</h4><p className="text-xs text-muted-foreground">{data.date} {data.reference ? `· ${data.reference}` : ""}</p></div>
+        <div>
+          <div className="flex items-center gap-2">
+            <h4 className="font-semibold text-sm">{data.description}</h4>
+            <VoucherBadge no={data.voucher_no} type={data.voucher_type} />
+          </div>
+          <p className="text-xs text-muted-foreground">{data.date} {data.reference ? `· ${data.reference}` : ""}</p>
+        </div>
         <Button size="sm" variant="outline" className="h-7" onClick={onClose}>Close</Button>
       </div>
       <table className="w-full text-xs">

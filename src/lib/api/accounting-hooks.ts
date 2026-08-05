@@ -73,6 +73,11 @@ export interface GRN {
 export interface JournalEntry {
   id: string; date: string; description: string;
   reference: string; created_at: string;
+  /** D365-style voucher, e.g. SAL-000001. Empty on entries posted before
+   *  voucher numbering was introduced. */
+  voucher_no: string;
+  /** SAL (sales) | PUR (purchase) | PAY (payment) | GEN (general). */
+  voucher_type: string;
 }
 
 export interface JournalLine {
