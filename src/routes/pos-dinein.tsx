@@ -124,6 +124,13 @@ function FloorView({ outletId, onOpenSession }: { outletId: string; onOpenSessio
   const [opening, setOpening] = useState<TableT | null>(null);
   const [covers, setCovers] = useState(2);
   const [guestName, setGuestName] = useState("");
+  // Optional contact capture. When a phone or email is supplied the backend
+  // creates or matches an accounting customer and links it to the session, so
+  // the sale shows up in the customer ledger and is editable from Accounting.
+  // A bare name deliberately does not create a record - it identifies nobody.
+  const [guestPhone, setGuestPhone] = useState("");
+  const [guestEmail, setGuestEmail] = useState("");
+  const [guestGstin, setGuestGstin] = useState("");
 
   const createTable = useMutation({
     mutationFn: (body: Record<string, unknown>) => apiFetch<TableT>("/api/pos/tables", { method: "POST", body }),
@@ -168,7 +175,10 @@ function FloorView({ outletId, onOpenSession }: { outletId: string; onOpenSessio
             <button
               key={t.id}
               disabled={t.status !== "available" && t.status !== "reserved"}
-              onClick={() => { setOpening(t); setCovers(2); setGuestName(""); }}
+              onClick={() => {
+                setOpening(t); setCovers(2); setGuestName("");
+                setGuestPhone(""); setGuestEmail(""); setGuestGstin("");
+              }}
               className={`border-2 p-4 text-left disabled:opacity-60 ${TABLE_COLORS[t.status] ?? "border-border"}`}
             >
               <div className="text-lg font-bold font-mono">{t.table_number}</div>
@@ -191,13 +201,65 @@ function FloorView({ outletId, onOpenSession }: { outletId: string; onOpenSessio
               <Label>Guest name (optional)</Label>
               <Input value={guestName} onChange={(e) => setGuestName(e.target.value)} placeholder="Walk-in" />
             </div>
+
+            <div className="rounded-md border border-dashed p-3 space-y-3">
+              <div>
+                <p className="text-sm font-medium">Customer details (optional)</p>
+                <p className="text-xs text-muted-foreground">
+                  Add a phone or email to link this sale to a customer in Accounting.
+                  Leave blank for an anonymous walk-in.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <Label>Phone</Label>
+                <Input
+                  type="tel"
+                  inputMode="tel"
+                  value={guestPhone}
+                  onChange={(e) => setGuestPhone(e.target.value)}
+                  placeholder="98765 43210"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Used to recognise returning customers. Formats such as
+                  +91 98765 43210 and 9876543210 match the same person.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <Label>Email</Label>
+                <Input
+                  type="email"
+                  value={guestEmail}
+                  onChange={(e) => setGuestEmail(e.target.value)}
+                  placeholder="guest@example.com"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>GSTIN</Label>
+                <Input
+                  value={guestGstin}
+                  onChange={(e) => setGuestGstin(e.target.value.toUpperCase())}
+                  placeholder="27AABCU9603R1ZV"
+                />
+                <p className="text-xs text-muted-foreground">
+                  For a business customer who needs a GST invoice.
+                </p>
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button
               disabled={openSession.isPending}
               onClick={() => opening && openSession.mutate({
                 tableId: opening.id,
-                body: { covers, guest_name: guestName || null, customer_type: "walk_in" },
+                body: {
+                  covers,
+                  guest_name: guestName || null,
+                  customer_type: "walk_in",
+                  customer_name: guestName.trim(),
+                  customer_phone: guestPhone.trim(),
+                  customer_email: guestEmail.trim(),
+                  customer_gstin: guestGstin.trim(),
+                },
               })}
             >
               Open Table
