@@ -60,6 +60,8 @@ export const queryKeys = {
   dashboardStats: ["dashboard", "stats"] as const,
   dashboardData: ["dashboard", "data"] as const,
   rooms: (status?: string) => ["rooms", status ?? "all"] as const,
+  roomsAvailable: (checkIn: string, checkOut: string) =>
+    ["rooms", "available", checkIn, checkOut] as const,
   reservations: (filters?: Record<string, string>) => ["reservations", filters ?? {}] as const,
   guests: ["crm", "guests"] as const,
   housekeepingTasks: ["housekeeping", "tasks"] as const,
@@ -96,6 +98,21 @@ export function useRooms(status?: RoomStatus) {
     queryKey: queryKeys.rooms(status),
     queryFn: () => apiFetch<Room[]>("/api/rooms", { query: { status } }),
     enabled: isAuthenticated(),
+  });
+}
+
+// Rooms bookable for a date range — the right question for a booking form.
+// Filtering useRooms() by status answers "free right now" instead, which hides
+// every room from a full hotel even when the dates are months away.
+export function useAvailableRooms(checkIn: string, checkOut: string) {
+  return useQuery({
+    queryKey: queryKeys.roomsAvailable(checkIn, checkOut),
+    queryFn: () =>
+      apiFetch<Room[]>("/api/rooms/available", {
+        query: { check_in: checkIn, check_out: checkOut },
+      }),
+    // The API rejects a non-positive range; don't spend a request to be told so.
+    enabled: isAuthenticated() && !!checkIn && !!checkOut && checkOut > checkIn,
   });
 }
 

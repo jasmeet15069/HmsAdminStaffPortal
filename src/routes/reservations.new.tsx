@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { PageHeader } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useRooms, useCreateReservation } from "@/lib/api/hooks";
+import { useAvailableRooms, useCreateReservation } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react";
 
@@ -39,9 +39,7 @@ interface RoomVM {
 function NewReservation() {
   const nav = useNavigate();
   const authed = !!useAuth((s) => s.user);
-  const liveRooms = useRooms();
   const createRes = useCreateReservation();
-  const isLive = authed && !!liveRooms.data;
 
   const { rooms, addGuest, addReservation } = useMHMS();
   const [step, setStep] = useState(1);
@@ -52,13 +50,34 @@ function NewReservation() {
     roomId: "", source: "Direct", notes: "",
   });
 
+  // Ask which rooms are free for the chosen dates, rather than which are free
+  // right now. The old filter (status === "available") made the wizard
+  // impossible to finish at a busy hotel: every room read occupied or cleaning,
+  // step 2 offered nothing, and Continue stayed disabled — while those same
+  // rooms were perfectly bookable for the dates being requested.
+  const liveRooms = useAvailableRooms(r.checkIn, r.checkOut);
+  const isLive = authed && !!liveRooms.data;
+
   const available: RoomVM[] = isLive
-    ? (liveRooms.data ?? [])
-        .filter((rm) => rm.status === "available")
-        .map((rm) => ({ id: rm.id, number: rm.room_number, type: rm.room_type, floor: rm.floor, capacity: rm.capacity, rate: rm.price_per_night, amenities: rm.amenities ?? [] }))
+    ? (liveRooms.data ?? []).map((rm) => ({ id: rm.id, number: rm.room_number, type: rm.room_type, floor: rm.floor, capacity: rm.capacity, rate: rm.price_per_night, amenities: rm.amenities ?? [] }))
     : rooms
         .filter((x) => x.status === "vacant_clean" || x.status === "vacant_dirty")
         .map((rm) => ({ id: rm.id, number: rm.number, type: rm.type, floor: rm.floor, capacity: rm.capacity, rate: rm.rate, amenities: rm.amenities }));
+
+  // Dates are editable on step 1, which can be revisited after a room is
+  // chosen, and the choice may not survive the new dates. Drop it rather than
+  // submit a room that is no longer free, and send the user back to pick again
+  // instead of leaving the later steps rendering an empty card.
+  //
+  // Depends on liveRooms.data, not the mapped array, which is rebuilt each
+  // render and would re-run this on every one.
+  useEffect(() => {
+    if (!isLive || liveRooms.isLoading || !r.roomId) return;
+    if (!(liveRooms.data ?? []).some((rm) => rm.id === r.roomId)) {
+      setR((prev) => ({ ...prev, roomId: "" }));
+      setStep((s) => (s > 2 ? 2 : s));
+    }
+  }, [isLive, liveRooms.isLoading, liveRooms.data, r.roomId]);
 
   const selectedRoom = available.find((x) => x.id === r.roomId);
   const nights = Math.max(1, Math.round((new Date(r.checkOut).getTime() - new Date(r.checkIn).getTime()) / 86400000));
@@ -185,7 +204,9 @@ function NewReservation() {
               </button>
             ))}
             {available.length === 0 && !liveRooms.isLoading && (
-              <div className="col-span-2 text-center py-10 text-muted-foreground text-sm">No available rooms for these dates.</div>
+              <div className="col-span-2 text-center py-10 text-muted-foreground text-sm">
+                No rooms are free for {r.checkIn} → {r.checkOut}. Try different dates.
+              </div>
             )}
           </div>
         )}
