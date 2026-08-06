@@ -156,6 +156,10 @@ function NewReservation() {
         .filter((x) => x.status === "vacant_clean" || x.status === "vacant_dirty")
         .map((rm) => ({ id: rm.id, number: rm.number, type: rm.type, floor: rm.floor, capacity: rm.capacity, rate: rm.rate, amenities: rm.amenities }));
 
+  const guestCount = Math.max(1, g.adults + g.children);
+  const selectedRoom = available.find((x) => x.id === r.roomId);
+  const selectedRoomFits = !!selectedRoom && guestCount <= selectedRoom.capacity;
+
   // Dates are editable on step 1, which can be revisited after a room is
   // chosen, and the choice may not survive the new dates. Drop it rather than
   // submit a room that is no longer free, and send the user back to pick again
@@ -171,7 +175,6 @@ function NewReservation() {
     }
   }, [isLive, liveRooms.isLoading, liveRooms.data, r.roomId]);
 
-  const selectedRoom = available.find((x) => x.id === r.roomId);
   const nights = countCalendarNights(r.checkIn, r.checkOut) ?? 1;
 
   // Money comes from the server. The wizard used to compute a hardcoded 18% GST
@@ -213,6 +216,13 @@ function NewReservation() {
   const changeDue = pay.method === "cash" ? Math.max(0, Number(pay.cashReceived || 0) - total) : 0;
 
   const submit = () => {
+    if (!selectedRoom || !selectedRoomFits) {
+      toast.error(selectedRoom
+        ? `Room ${selectedRoom.number} sleeps ${selectedRoom.capacity}; ${guestCount} guests requested.`
+        : "Choose an available room before confirming.");
+      setStep(2);
+      return;
+    }
     if (isLive) {
       const payment: ReservationPaymentInput | undefined = pay.take
         ? {
@@ -292,6 +302,40 @@ function NewReservation() {
     });
     toast.success(`Reservation ${res.code} created for ${guest.name}`);
     nav({ to: "/reservations" });
+  };
+
+  const continueToNextStep = async () => {
+    if (step !== 2) {
+      setStep((current) => current + 1);
+      return;
+    }
+
+    if (!selectedRoom || !selectedRoomFits) {
+      toast.error(selectedRoom
+        ? `Room ${selectedRoom.number} sleeps ${selectedRoom.capacity}; ${guestCount} guests requested.`
+        : "Choose a room that can accommodate every guest.");
+      return;
+    }
+
+    // The room list can become stale while the desk collects guest details.
+    // Recheck before payment; Create remains the final protection against a
+    // concurrent reservation being made after this request completes.
+    if (isLive) {
+      const { data } = await liveRooms.refetch();
+      const refreshedRoom = data?.find((room) => room.id === r.roomId);
+      if (!refreshedRoom) {
+        setR((previous) => ({ ...previous, roomId: "" }));
+        toast.error(`Room ${selectedRoom.number} is no longer available for these dates. Choose another room.`);
+        return;
+      }
+      if (guestCount > refreshedRoom.capacity) {
+        setR((previous) => ({ ...previous, roomId: "" }));
+        toast.error(`Room ${refreshedRoom.room_number} sleeps ${refreshedRoom.capacity}; ${guestCount} guests requested.`);
+        return;
+      }
+    }
+
+    setStep(3);
   };
 
   return (
@@ -425,14 +469,21 @@ function NewReservation() {
         )}
         {step === 2 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[480px] overflow-y-auto">
+            <div className="col-span-2 text-sm text-muted-foreground">
+              Select a room for {guestCount} guest{guestCount === 1 ? "" : "s"}. Rooms that cannot accommodate the party are unavailable.
+            </div>
             {isLive && liveRooms.isLoading && (
               <div className="col-span-2 flex justify-center py-10"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>
             )}
-            {available.map((rm) => (
+            {available.map((rm) => {
+              const roomFits = guestCount <= rm.capacity;
+              return (
               <button
                 key={rm.id}
+                type="button"
+                disabled={!roomFits}
                 onClick={() => setR({ ...r, roomId: rm.id })}
-                className={`text-left border rounded-lg p-4 transition ${r.roomId === rm.id ? "border-primary bg-primary/5 ring-2 ring-primary/20" : "hover:border-primary/40"}`}
+                className={`text-left border rounded-lg p-4 transition ${r.roomId === rm.id && roomFits ? "border-primary bg-primary/5 ring-2 ring-primary/20" : roomFits ? "hover:border-primary/40" : "cursor-not-allowed opacity-50"}`}
               >
                 <div className="flex items-center justify-between">
                   <div>
@@ -444,9 +495,13 @@ function NewReservation() {
                     <div className="text-xs text-muted-foreground">per night</div>
                   </div>
                 </div>
+                {!roomFits && (
+                  <p className="mt-2 text-xs text-destructive">Cannot assign: sleeps {rm.capacity}, {guestCount} guests requested.</p>
+                )}
                 <div className="flex flex-wrap gap-1 mt-2">{rm.amenities.map((a) => <Badge key={a} variant="outline" className="text-[10px]">{a}</Badge>)}</div>
               </button>
-            ))}
+              );
+            })}
             {available.length === 0 && !liveRooms.isLoading && (
               <div className="col-span-2 text-center py-10 text-muted-foreground text-sm">
                 No rooms are free for {r.checkIn} → {r.checkOut}. Try different dates.
@@ -585,6 +640,11 @@ function NewReservation() {
               </Field>
               <Field label="Payable"><div className="font-semibold text-lg">{fmtINR(total)}</div></Field>
             </div>
+            {!selectedRoomFits && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+                Room {selectedRoom.number} sleeps {selectedRoom.capacity}; {guestCount} guests requested. Go back and choose a suitable room.
+              </div>
+            )}
             {pay.take && (
               <p className="text-xs text-muted-foreground">
                 Confirming records the payment and posts the receipt voucher, ledger entry and sales invoice
@@ -598,20 +658,20 @@ function NewReservation() {
           <Button variant="outline" disabled={step === 1} onClick={() => setStep(step - 1)}><ArrowLeft className="size-4" /> Back</Button>
           {step < 4 ? (
             <Button
-              onClick={() => setStep(step + 1)}
+              onClick={() => void continueToNextStep()}
               disabled={
                 // At least one contact detail: the API requires it, because
                 // without a phone or an email a returning guest can never be
                 // matched and no folio can be opened at check-in.
                 (step === 1 && (!g.name || (!g.phone && !g.email))) ||
-                (step === 2 && !r.roomId) ||
+                (step === 2 && (!r.roomId || !selectedRoomFits)) ||
                 (step === 3 && !paymentReady)
               }
             >
               Continue <ArrowRight className="size-4" />
             </Button>
           ) : (
-            <Button onClick={submit} disabled={createRes.isPending || !paymentReady}>
+            <Button onClick={submit} disabled={createRes.isPending || !paymentReady || !selectedRoomFits}>
               {createRes.isPending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
               {pay.take ? " Confirm & take payment" : " Confirm reservation"}
             </Button>

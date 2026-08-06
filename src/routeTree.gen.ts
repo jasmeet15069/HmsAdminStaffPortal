@@ -29,7 +29,6 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as ImpersonateRouteImport } from './routes/impersonate'
 import { Route as HousekeepingRouteImport } from './routes/housekeeping'
-import { Route as FrontDeskRouteImport } from './routes/front-desk'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as ChannelManagerRouteImport } from './routes/channel-manager'
 import { Route as BookingEngineRouteImport } from './routes/booking-engine'
@@ -141,11 +140,6 @@ const HousekeepingRoute = HousekeepingRouteImport.update({
   path: '/housekeeping',
   getParentRoute: () => rootRouteImport,
 } as any)
-const FrontDeskRoute = FrontDeskRouteImport.update({
-  id: '/front-desk',
-  path: '/front-desk',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const CrmRoute = CrmRouteImport.update({
   id: '/crm',
   path: '/crm',
@@ -205,7 +199,6 @@ export interface FileRoutesByFullPath {
   '/booking-engine': typeof BookingEngineRoute
   '/channel-manager': typeof ChannelManagerRoute
   '/crm': typeof CrmRoute
-  '/front-desk': typeof FrontDeskRoute
   '/housekeeping': typeof HousekeepingRoute
   '/impersonate': typeof ImpersonateRoute
   '/inventory': typeof InventoryRoute
@@ -238,7 +231,6 @@ export interface FileRoutesByTo {
   '/booking-engine': typeof BookingEngineRoute
   '/channel-manager': typeof ChannelManagerRoute
   '/crm': typeof CrmRoute
-  '/front-desk': typeof FrontDeskRoute
   '/housekeeping': typeof HousekeepingRoute
   '/impersonate': typeof ImpersonateRoute
   '/inventory': typeof InventoryRoute
@@ -272,7 +264,6 @@ export interface FileRoutesById {
   '/booking-engine': typeof BookingEngineRoute
   '/channel-manager': typeof ChannelManagerRoute
   '/crm': typeof CrmRoute
-  '/front-desk': typeof FrontDeskRoute
   '/housekeeping': typeof HousekeepingRoute
   '/impersonate': typeof ImpersonateRoute
   '/inventory': typeof InventoryRoute
@@ -307,7 +298,6 @@ export interface FileRouteTypes {
     | '/booking-engine'
     | '/channel-manager'
     | '/crm'
-    | '/front-desk'
     | '/housekeeping'
     | '/impersonate'
     | '/inventory'
@@ -340,7 +330,6 @@ export interface FileRouteTypes {
     | '/booking-engine'
     | '/channel-manager'
     | '/crm'
-    | '/front-desk'
     | '/housekeeping'
     | '/impersonate'
     | '/inventory'
@@ -373,7 +362,6 @@ export interface FileRouteTypes {
     | '/booking-engine'
     | '/channel-manager'
     | '/crm'
-    | '/front-desk'
     | '/housekeeping'
     | '/impersonate'
     | '/inventory'
@@ -407,7 +395,6 @@ export interface RootRouteChildren {
   BookingEngineRoute: typeof BookingEngineRoute
   ChannelManagerRoute: typeof ChannelManagerRoute
   CrmRoute: typeof CrmRoute
-  FrontDeskRoute: typeof FrontDeskRoute
   HousekeepingRoute: typeof HousekeepingRoute
   ImpersonateRoute: typeof ImpersonateRoute
   InventoryRoute: typeof InventoryRoute
@@ -573,13 +560,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HousekeepingRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/front-desk': {
-      id: '/front-desk'
-      path: '/front-desk'
-      fullPath: '/front-desk'
-      preLoaderRoute: typeof FrontDeskRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/crm': {
       id: '/crm'
       path: '/crm'
@@ -675,7 +655,6 @@ const rootRouteChildren: RootRouteChildren = {
   BookingEngineRoute: BookingEngineRoute,
   ChannelManagerRoute: ChannelManagerRoute,
   CrmRoute: CrmRoute,
-  FrontDeskRoute: FrontDeskRoute,
   HousekeepingRoute: HousekeepingRoute,
   ImpersonateRoute: ImpersonateRoute,
   InventoryRoute: InventoryRoute,

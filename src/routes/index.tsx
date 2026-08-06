@@ -26,7 +26,7 @@ import {
   Legend,
 } from "recharts";
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, CalendarPlus, LogIn, LogOut, Sparkles } from "lucide-react";
+import { ArrowRight, CalendarPlus, Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [{ title: "Dashboard · MHMS" }] }),
@@ -264,10 +264,8 @@ function Dashboard() {
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold">Quick Actions</h3>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             {[
-              { to: "/front-desk", label: "Check In", icon: LogIn },
-              { to: "/front-desk", label: "Check Out", icon: LogOut },
               { to: "/housekeeping", label: "Assign Cleaning", icon: Sparkles },
               { to: "/reservations/new", label: "New Booking", icon: CalendarPlus },
             ].map((a) => {

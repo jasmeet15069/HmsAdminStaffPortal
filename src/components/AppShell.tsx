@@ -2,7 +2,6 @@ import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-route
 import {
   LayoutDashboard,
   CalendarCheck,
-  Hotel,
   Sparkles,
   TrendingUp,
   Receipt,
@@ -80,7 +79,6 @@ const nav: NavEntry[] = [
     icon: Briefcase,
     children: [
       { to: "/reservations", label: "Reservations", icon: CalendarCheck, module: "reservations" },
-      { to: "/front-desk", label: "Front Desk", icon: Hotel, module: "front_desk" },
       { to: "/crm", label: "CRM & Loyalty", icon: Users, module: "crm" },
     ],
   },
