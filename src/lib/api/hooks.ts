@@ -243,6 +243,8 @@ export function useReservationQuote(input: {
   room_id: string;
   check_in_date: string;
   check_out_date: string;
+  check_in_time?: string;
+  check_out_time?: string;
   promo_code?: string;
 }) {
   const enabled =
@@ -259,6 +261,8 @@ export function useReservationQuote(input: {
       input.room_id,
       input.check_in_date,
       input.check_out_date,
+      input.check_in_time ?? "",
+      input.check_out_time ?? "",
       input.promo_code ?? "",
     ] as const,
     queryFn: () => apiFetch<StayQuote>("/api/reservations/quote", { method: "POST", body: input }),

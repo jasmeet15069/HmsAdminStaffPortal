@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { PageHeader } from "@/components/AppShell";
 import { useMHMS, resStatusMeta, fmtINR, type ResStatus } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
@@ -30,8 +30,16 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/reservations")({
   head: () => ({ meta: [{ title: "Reservations · MHMS" }] }),
-  component: ReservationsPage,
+  component: ReservationsRoute,
 });
+
+// This route owns the reservations list as well as the new/detail child
+// routes. Rendering the list unconditionally meant /reservations/new matched
+// correctly but its wizard was never mounted because there was no outlet.
+function ReservationsRoute() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  return pathname === "/reservations" ? <ReservationsPage /> : <Outlet />;
+}
 
 // A view-model row that both the live API and the demo store normalize into, so
 // the table/dialog render from a single shape regardless of data source.

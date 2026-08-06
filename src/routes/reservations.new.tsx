@@ -73,6 +73,32 @@ interface RoomVM {
   amenities: string[];
 }
 
+function dateAtMidnightUTC(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value ? null : date;
+}
+
+function countCalendarNights(checkIn: string, checkOut: string): number | null {
+  const start = dateAtMidnightUTC(checkIn);
+  const end = dateAtMidnightUTC(checkOut);
+  if (!start || !end) return null;
+  const nights = Math.round((end.getTime() - start.getTime()) / 86400000);
+  return nights > 0 ? nights : null;
+}
+
+function addCalendarNights(checkIn: string, nights: number): string | null {
+  const start = dateAtMidnightUTC(checkIn);
+  if (!start || !Number.isInteger(nights) || nights < 1) return null;
+  start.setUTCDate(start.getUTCDate() + nights);
+  return start.toISOString().slice(0, 10);
+}
+
+function positiveWholeNights(value: string): number | null {
+  const nights = Number(value);
+  return Number.isInteger(nights) && nights >= 1 ? nights : null;
+}
+
 function NewReservation() {
   const nav = useNavigate();
   const { walkin } = useSearch({ from: "/reservations/new" });
@@ -102,6 +128,10 @@ function NewReservation() {
     checkInTime: walkin ? new Date().toTimeString().slice(0, 5) : "14:00",
     checkOutTime: "11:00",
   });
+  // Keep the field's editable text separate from the dates it controls. A
+  // derived number value fights partial edits (for example, typing "12") and
+  // can become NaN while a date input is temporarily empty.
+  const [durationNights, setDurationNights] = useState(() => String(walkin ? 1 : 2));
   const [pay, setPay] = useState({
     take: true,
     method: "cash" as ReservationPaymentInput["method"],
@@ -142,7 +172,7 @@ function NewReservation() {
   }, [isLive, liveRooms.isLoading, liveRooms.data, r.roomId]);
 
   const selectedRoom = available.find((x) => x.id === r.roomId);
-  const nights = Math.max(1, Math.round((new Date(r.checkOut).getTime() - new Date(r.checkIn).getTime()) / 86400000));
+  const nights = countCalendarNights(r.checkIn, r.checkOut) ?? 1;
 
   // Money comes from the server. The wizard used to compute a hardcoded 18% GST
   // here, display the total including it, and then send nothing — so the guest
@@ -153,6 +183,8 @@ function NewReservation() {
     room_id: r.roomId,
     check_in_date: r.checkIn,
     check_out_date: r.checkOut,
+    check_in_time: r.checkInTime || undefined,
+    check_out_time: r.checkOutTime || undefined,
     promo_code: appliedPromo || undefined,
   });
   const quote = quoteQ.data;
@@ -354,7 +386,11 @@ function NewReservation() {
             <div />
             <Field label="Adults"><Input type="number" min={1} value={g.adults} onChange={(e) => setG({ ...g, adults: +e.target.value })} /></Field>
             <Field label="Children"><Input type="number" min={0} value={g.children} onChange={(e) => setG({ ...g, children: +e.target.value })} /></Field>
-            <Field label="Check-in date *"><Input type="date" value={r.checkIn} onChange={(e) => setR({ ...r, checkIn: e.target.value })} /></Field>
+            <Field label="Check-in date *"><Input type="date" value={r.checkIn} onChange={(e) => {
+              const checkIn = e.target.value;
+              const checkOut = addCalendarNights(checkIn, positiveWholeNights(durationNights) ?? 0);
+              setR({ ...r, checkIn, checkOut: checkOut ?? r.checkOut });
+            }} /></Field>
             <Field label="Check-in time"><Input type="time" value={r.checkInTime} onChange={(e) => setR({ ...r, checkInTime: e.target.value })} /></Field>
             {/* The desk books in nights. Editing either this or the check-out
                 date updates the other, so the two can never disagree — the API
@@ -363,15 +399,22 @@ function NewReservation() {
               <Input
                 type="number"
                 min={1}
-                value={nights}
+                value={durationNights}
                 onChange={(e) => {
-                  const n = Math.max(1, Number(e.target.value) || 1);
-                  const out = new Date(new Date(r.checkIn).getTime() + n * 86400000);
-                  setR({ ...r, checkOut: out.toISOString().slice(0, 10) });
+                  const value = e.target.value;
+                  setDurationNights(value);
+                  const checkOut = addCalendarNights(r.checkIn, positiveWholeNights(value) ?? 0);
+                  if (checkOut) setR({ ...r, checkOut });
                 }}
+                onBlur={() => setDurationNights(String(positiveWholeNights(durationNights) ?? nights))}
               />
             </Field>
-            <Field label="Check-out date *"><Input type="date" value={r.checkOut} onChange={(e) => setR({ ...r, checkOut: e.target.value })} /></Field>
+            <Field label="Check-out date *"><Input type="date" value={r.checkOut} onChange={(e) => {
+              const checkOut = e.target.value;
+              const nextNights = countCalendarNights(r.checkIn, checkOut);
+              if (nextNights) setDurationNights(String(nextNights));
+              setR({ ...r, checkOut });
+            }} /></Field>
             <Field label="Check-out time"><Input type="time" value={r.checkOutTime} onChange={(e) => setR({ ...r, checkOutTime: e.target.value })} /></Field>
             {selectedRoom && g.adults + g.children > selectedRoom.capacity && (
               <div className="col-span-2 text-sm text-destructive">
