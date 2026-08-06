@@ -90,6 +90,10 @@ function NewReservation() {
     approachType: walkin ? "walk_in" : "manual",
     promoCode: "",
     notes: "",
+    // A walk-in is standing at the desk now; a planned booking arrives at the
+    // property's usual check-in hour.
+    checkInTime: walkin ? new Date().toTimeString().slice(0, 5) : "14:00",
+    checkOutTime: "11:00",
   });
   const [pay, setPay] = useState({
     take: true,
@@ -198,6 +202,8 @@ function NewReservation() {
           adults: g.adults,
           children: g.children,
           approach_type: r.approachType,
+          check_in_time: r.checkInTime || undefined,
+          check_out_time: r.checkOutTime || undefined,
           promo_code: appliedPromo || undefined,
           id_type: g.idType || undefined,
           id_number: g.idNumber || undefined,
@@ -305,7 +311,24 @@ function NewReservation() {
             <Field label="Adults"><Input type="number" min={1} value={g.adults} onChange={(e) => setG({ ...g, adults: +e.target.value })} /></Field>
             <Field label="Children"><Input type="number" min={0} value={g.children} onChange={(e) => setG({ ...g, children: +e.target.value })} /></Field>
             <Field label="Check-in date *"><Input type="date" value={r.checkIn} onChange={(e) => setR({ ...r, checkIn: e.target.value })} /></Field>
+            <Field label="Check-in time"><Input type="time" value={r.checkInTime} onChange={(e) => setR({ ...r, checkInTime: e.target.value })} /></Field>
+            {/* The desk books in nights. Editing either this or the check-out
+                date updates the other, so the two can never disagree — the API
+                rejects a mismatched pair rather than guessing which was meant. */}
+            <Field label="Duration (nights)">
+              <Input
+                type="number"
+                min={1}
+                value={nights}
+                onChange={(e) => {
+                  const n = Math.max(1, Number(e.target.value) || 1);
+                  const out = new Date(new Date(r.checkIn).getTime() + n * 86400000);
+                  setR({ ...r, checkOut: out.toISOString().slice(0, 10) });
+                }}
+              />
+            </Field>
             <Field label="Check-out date *"><Input type="date" value={r.checkOut} onChange={(e) => setR({ ...r, checkOut: e.target.value })} /></Field>
+            <Field label="Check-out time"><Input type="time" value={r.checkOutTime} onChange={(e) => setR({ ...r, checkOutTime: e.target.value })} /></Field>
             {selectedRoom && g.adults + g.children > selectedRoom.capacity && (
               <div className="col-span-2 text-sm text-destructive">
                 Room {selectedRoom.number} sleeps {selectedRoom.capacity}. Reduce the guest count or pick another room.

@@ -182,6 +182,9 @@ export interface CreateReservationInput {
   children?: number;
   approach_type?: string;
   duration_nights?: number;
+  /** "HH:MM". Omitted means midnight, which is what every row before this carried. */
+  check_in_time?: string;
+  check_out_time?: string;
   promo_code?: string;
   id_type?: string;
   id_number?: string;
