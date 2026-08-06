@@ -153,6 +153,20 @@ export interface HousekeepingTask {
   assigned_staff?: { full_name: string };
 }
 
+/** Payment taken at the desk when the booking is made.
+ *
+ *  `card_last4` is exactly that — four digits. The API rejects anything longer
+ *  rather than truncating it, because a longer value means a full card number
+ *  was transmitted. Never put a full PAN in this field. */
+export interface ReservationPaymentInput {
+  method: "cash" | "card" | "upi" | "credit";
+  upi_id?: string;
+  transaction_ref?: string;
+  card_last4?: string;
+  auth_code?: string;
+  cash_received?: number;
+}
+
 export interface CreateReservationInput {
   guest_name: string;
   guest_email?: string;
@@ -162,6 +176,55 @@ export interface CreateReservationInput {
   check_out_date: string; // YYYY-MM-DD
   source?: string;
   notes?: string;
+  // Front-office additions. All optional — the original eight fields alone
+  // still behave exactly as they did.
+  adults?: number;
+  children?: number;
+  approach_type?: string;
+  duration_nights?: number;
+  promo_code?: string;
+  id_type?: string;
+  id_number?: string;
+  payment?: ReservationPaymentInput;
+}
+
+/** Server-side price breakdown. The client never computes money itself: the
+ *  wizard used to hardcode 18% GST and display a total it then never sent, so
+ *  the guest agreed to one figure and the database stored another. */
+export interface StayQuote {
+  nights: number;
+  room_rate: number;
+  base_total: number;
+  discount: number;
+  tax_rate: number;
+  tax_amount: number;
+  payable: number;
+}
+
+/** What settling the booking produced in the accounting module. */
+export interface ReservationSettlement {
+  customer_id?: string;
+  invoice_id?: string;
+  invoice_number?: string;
+  journal_entry_id?: string;
+  payment_id?: string;
+  voucher_reference?: string;
+}
+
+export interface PromoResult {
+  valid: boolean;
+  code: string;
+  name?: string;
+  discount: number;
+  message: string;
+}
+
+/** POST /api/reservations. The reservation's own fields stay at the top level,
+ *  so `data.id` still works; the accounting artefacts sit beside them. */
+export interface CreateReservationResult extends ReservationDetail {
+  quote?: StayQuote;
+  settlement?: ReservationSettlement;
+  promo?: PromoResult;
 }
 
 export interface CreateRoomInput {
@@ -488,6 +551,17 @@ export interface ReservationDetail extends Reservation {
   room_id?: string | null;
   adults?: number;
   children?: number;
+  // Front-office lifecycle and pricing. Optional throughout: rows created
+  // before these columns existed carry the backfilled defaults, and older
+  // clients simply ignore them.
+  confirmation_no?: string | null;
+  approach_type?: string;
+  discount_amount?: number;
+  tax_amount?: number;
+  promo_code?: string | null;
+  cancelled_at?: string | null;
+  cancellation_reason?: string | null;
+  cancellation_fee?: number;
 }
 
 // ---------------------------------------------------------------------------

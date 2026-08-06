@@ -16,6 +16,7 @@ import type {
   CompetitorRate,
   CreatePosOrderBody,
   CreateReservationInput,
+  CreateReservationResult,
   CreateRoomInput,
   CreateTenantBody,
   BillingFolio,
@@ -52,6 +53,7 @@ import type {
   ReservationDetail,
   Room,
   RoomStatus,
+  StayQuote,
   TenantModulesResponse,
   Vendor,
 } from "./types";
@@ -186,11 +188,47 @@ export function useCreateReservation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateReservationInput) =>
-      apiFetch("/api/reservations", { method: "POST", body: input }),
+      apiFetch<CreateReservationResult>("/api/reservations", { method: "POST", body: input }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["reservations"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
+      // A settled booking writes a customer, a sales invoice and a journal
+      // entry, so the accounting screens are stale the moment this returns.
+      qc.invalidateQueries({ queryKey: ["accounting"] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
     },
+  });
+}
+
+/** Prices a stay server-side so the figure shown is the figure stored.
+ *
+ *  Deliberately keyed on every input that changes the price, including the
+ *  promo code, so editing any of them re-quotes rather than showing a stale
+ *  total the guest might agree to. */
+export function useReservationQuote(input: {
+  room_id: string;
+  check_in_date: string;
+  check_out_date: string;
+  promo_code?: string;
+}) {
+  const enabled =
+    isAuthenticated() &&
+    !!input.room_id &&
+    !!input.check_in_date &&
+    !!input.check_out_date &&
+    input.check_out_date > input.check_in_date;
+
+  return useQuery({
+    queryKey: [
+      "reservations",
+      "quote",
+      input.room_id,
+      input.check_in_date,
+      input.check_out_date,
+      input.promo_code ?? "",
+    ] as const,
+    queryFn: () => apiFetch<StayQuote>("/api/reservations/quote", { method: "POST", body: input }),
+    enabled,
   });
 }
 

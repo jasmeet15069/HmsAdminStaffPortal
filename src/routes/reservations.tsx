@@ -225,6 +225,14 @@ function ReservationsPage() {
             <Badge variant={isLive ? "default" : "outline"} className="self-center">
               {isLive ? "Live data" : "Demo data"}
             </Badge>
+            {/* Both open the same wizard. Walk-in only preselects the approach
+                type and defaults the stay to one night, so there is one form to
+                maintain rather than two that drift apart. */}
+            <Button variant="outline" asChild>
+              <Link to="/reservations/new" search={{ walkin: true }}>
+                <Plus className="size-4" /> Walk-in
+              </Link>
+            </Button>
             <Button asChild>
               <Link to="/reservations/new">
                 <Plus className="size-4" /> New reservation

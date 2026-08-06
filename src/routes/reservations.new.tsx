@@ -1,8 +1,9 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { PageHeader } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useAvailableRooms, useCreateReservation } from "@/lib/api/hooks";
+import { useAvailableRooms, useCreateReservation, useReservationQuote } from "@/lib/api/hooks";
+import type { ReservationPaymentInput } from "@/lib/api/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,16 @@ import { ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/reservations/new")({
   head: () => ({ meta: [{ title: "New Reservation · MHMS" }] }),
+  // A walk-in and a manual reservation are the same form — the only difference
+  // is how the guest reached the desk, which is what approach_type records.
+  // Rather than a second near-identical wizard to keep in step, ?walkin=1
+  // preselects the approach and defaults the stay to tonight.
+  //
+  // The param is optional and omitted when false, so every existing <Link
+  // to="/reservations/new"> keeps working without having to pass a search
+  // object.
+  validateSearch: (search: Record<string, unknown>): { walkin?: boolean } =>
+    search.walkin === "1" || search.walkin === true ? { walkin: true } : {},
   component: NewReservation,
 });
 
@@ -23,6 +34,27 @@ export const Route = createFileRoute("/reservations/new")({
 const BOOKING_SOURCES = [
   "Direct", "Booking.com", "Expedia", "MakeMyTrip", "Goibibo",
   "Agoda", "Airbnb", "Walk-in", "Phone", "Corporate",
+];
+
+const APPROACH_TYPES = [
+  { value: "walk_in", label: "Walk-in" },
+  { value: "manual", label: "Manual reservation" },
+  { value: "phone", label: "Phone enquiry" },
+  { value: "corporate", label: "Corporate booking" },
+];
+
+const ID_PROOF_TYPES = [
+  { value: "passport", label: "Passport" },
+  { value: "driver_license", label: "Driver licence" },
+  { value: "national_id", label: "National ID / Aadhaar" },
+  { value: "voter_id", label: "Voter ID" },
+];
+
+const PAYMENT_METHODS = [
+  { value: "cash", label: "Cash" },
+  { value: "card", label: "Card" },
+  { value: "upi", label: "UPI" },
+  { value: "credit", label: "Bill to company (credit)" },
 ];
 
 // Common shape both the live API rooms and the demo store rooms normalize into.
@@ -38,17 +70,36 @@ interface RoomVM {
 
 function NewReservation() {
   const nav = useNavigate();
+  const { walkin } = useSearch({ from: "/reservations/new" });
   const authed = !!useAuth((s) => s.user);
   const createRes = useCreateReservation();
 
   const { rooms, addGuest, addReservation } = useMHMS();
   const [step, setStep] = useState(1);
-  const [g, setG] = useState({ name: "", email: "", phone: "", nationality: "Indian", adults: 2, children: 0 });
+  const [g, setG] = useState({
+    name: "", email: "", phone: "", nationality: "Indian", adults: 2, children: 0,
+    idType: "", idNumber: "",
+  });
   const [r, setR] = useState({
     checkIn: new Date().toISOString().slice(0, 10),
-    checkOut: new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10),
-    roomId: "", source: "Direct", notes: "",
+    // A walk-in is here now and usually leaving tomorrow; a planned booking
+    // more often runs a couple of nights.
+    checkOut: new Date(Date.now() + 86400000 * (walkin ? 1 : 2)).toISOString().slice(0, 10),
+    roomId: "",
+    source: walkin ? "Walk-in" : "Direct",
+    approachType: walkin ? "walk_in" : "manual",
+    promoCode: "",
+    notes: "",
   });
+  const [pay, setPay] = useState({
+    take: true,
+    method: "cash" as ReservationPaymentInput["method"],
+    upiId: "", transactionRef: "", cardLast4: "", authCode: "", cashReceived: "",
+  });
+  // The promo code that has actually been priced, as opposed to what is
+  // currently being typed. Quoting on every keystroke would fire a request per
+  // character and flicker the total.
+  const [appliedPromo, setAppliedPromo] = useState("");
 
   // Ask which rooms are free for the chosen dates, rather than which are free
   // right now. The old filter (status === "available") made the wizard
@@ -81,14 +132,59 @@ function NewReservation() {
 
   const selectedRoom = available.find((x) => x.id === r.roomId);
   const nights = Math.max(1, Math.round((new Date(r.checkOut).getTime() - new Date(r.checkIn).getTime()) / 86400000));
-  const subtotal = (selectedRoom?.rate ?? 0) * nights;
-  const tax = Math.round(subtotal * 0.18);
-  const total = subtotal + tax;
 
-  const steps = ["Guest Details", "Room Selection", "Rate & Charges", "Confirm"];
+  // Money comes from the server. The wizard used to compute a hardcoded 18% GST
+  // here, display the total including it, and then send nothing — so the guest
+  // agreed to one figure while the reservation stored another, on every single
+  // booking. The tax rate is per-tenant (hotels.gst_rate) and was never 18% for
+  // everyone anyway.
+  const quoteQ = useReservationQuote({
+    room_id: r.roomId,
+    check_in_date: r.checkIn,
+    check_out_date: r.checkOut,
+    promo_code: appliedPromo || undefined,
+  });
+  const quote = quoteQ.data;
+
+  // Demo mode has no server to ask, so it falls back to the room rate alone
+  // rather than inventing a tax figure.
+  const subtotal = quote?.base_total ?? (selectedRoom?.rate ?? 0) * nights;
+  const discount = quote?.discount ?? 0;
+  const tax = quote?.tax_amount ?? 0;
+  const total = quote?.payable ?? subtotal;
+
+  const steps = ["Guest Details", "Room Selection", "Rate & Payment", "Confirm"];
+
+  // Mirrors the server's per-method rules, so the desk is told what is missing
+  // before the request is made rather than after it is refused.
+  const paymentReady = (() => {
+    if (!isLive || !pay.take) return true;
+    switch (pay.method) {
+      case "upi": return !!pay.upiId.trim() && !!pay.transactionRef.trim();
+      case "card": return !!pay.authCode.trim() && (pay.cardLast4 === "" || /^\d{4}$/.test(pay.cardLast4));
+      case "cash": return Number(pay.cashReceived || 0) >= total;
+      default: return true;
+    }
+  })();
+
+  const changeDue = pay.method === "cash" ? Math.max(0, Number(pay.cashReceived || 0) - total) : 0;
 
   const submit = () => {
     if (isLive) {
+      const payment: ReservationPaymentInput | undefined = pay.take
+        ? {
+            method: pay.method,
+            upi_id: pay.upiId.trim() || undefined,
+            transaction_ref: pay.transactionRef.trim() || undefined,
+            // Four digits only. The API refuses anything longer rather than
+            // truncating it, because a longer value means a full card number
+            // was already transmitted.
+            card_last4: pay.cardLast4.trim() || undefined,
+            auth_code: pay.authCode.trim() || undefined,
+            cash_received: pay.method === "cash" ? Number(pay.cashReceived || 0) : undefined,
+          }
+        : undefined;
+
       createRes.mutate(
         {
           guest_name: g.name,
@@ -99,10 +195,25 @@ function NewReservation() {
           check_out_date: r.checkOut,
           source: r.source,
           notes: r.notes || undefined,
+          adults: g.adults,
+          children: g.children,
+          approach_type: r.approachType,
+          promo_code: appliedPromo || undefined,
+          id_type: g.idType || undefined,
+          id_number: g.idNumber || undefined,
+          payment,
         },
         {
-          onSuccess: () => {
-            toast.success(`Reservation created for ${g.name} · via ${r.source}`);
+          onSuccess: (res) => {
+            // Name what the submission actually produced. A settled booking
+            // writes a customer, an invoice and a numbered voucher, and the
+            // desk should be able to quote the invoice number immediately.
+            const inv = res?.settlement?.invoice_number;
+            toast.success(
+              inv
+                ? `Reservation ${res?.confirmation_no ?? ""} created and settled · invoice ${inv}`
+                : `Reservation ${res?.confirmation_no ?? ""} created for ${g.name}`,
+            );
             nav({ to: "/reservations" });
           },
           onError: (e: any) => toast.error(e?.message ?? "Failed to create reservation"),
@@ -123,8 +234,8 @@ function NewReservation() {
   return (
     <>
       <PageHeader
-        title="New Reservation"
-        description="Step-by-step booking wizard"
+        title={walkin ? "Walk-in" : "New Reservation"}
+        description={walkin ? "Same form as a manual reservation, defaulted for a guest at the desk" : "Step-by-step booking wizard"}
         actions={
           <Badge variant={isLive ? "default" : "outline"} className="self-center">
             {isLive ? "Live data" : "Demo data"}
@@ -164,6 +275,14 @@ function NewReservation() {
                 </SelectContent>
               </Select>
             </Field>
+            <Field label="Approach type">
+              <Select value={r.approachType} onValueChange={(v) => setR({ ...r, approachType: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {APPROACH_TYPES.map((a) => <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
             <Field label="Booking source">
               <Select value={r.source} onValueChange={(v) => setR({ ...r, source: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -172,11 +291,26 @@ function NewReservation() {
                 </SelectContent>
               </Select>
             </Field>
+            <Field label="ID proof type">
+              <Select value={g.idType} onValueChange={(v) => setG({ ...g, idType: v })}>
+                <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
+                <SelectContent>
+                  {ID_PROOF_TYPES.map((d) => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="ID number">
+              <Input value={g.idNumber} onChange={(e) => setG({ ...g, idNumber: e.target.value })} placeholder="Document number" />
+            </Field>
             <Field label="Adults"><Input type="number" min={1} value={g.adults} onChange={(e) => setG({ ...g, adults: +e.target.value })} /></Field>
             <Field label="Children"><Input type="number" min={0} value={g.children} onChange={(e) => setG({ ...g, children: +e.target.value })} /></Field>
-            <div />
             <Field label="Check-in date *"><Input type="date" value={r.checkIn} onChange={(e) => setR({ ...r, checkIn: e.target.value })} /></Field>
             <Field label="Check-out date *"><Input type="date" value={r.checkOut} onChange={(e) => setR({ ...r, checkOut: e.target.value })} /></Field>
+            {selectedRoom && g.adults + g.children > selectedRoom.capacity && (
+              <div className="col-span-2 text-sm text-destructive">
+                Room {selectedRoom.number} sleeps {selectedRoom.capacity}. Reduce the guest count or pick another room.
+              </div>
+            )}
           </div>
         )}
         {step === 2 && (
@@ -212,19 +346,111 @@ function NewReservation() {
         )}
         {step === 3 && selectedRoom && (
           <div className="space-y-3 text-sm">
-            <Row k={`Room ${selectedRoom.number} · ${selectedRoom.type}`} v={`${nights} night${nights > 1 ? "s" : ""} × ${fmtINR(selectedRoom.rate)}`} />
+            <Row k={`Room ${selectedRoom.number} · ${selectedRoom.type}`} v={`${nights} night${nights > 1 ? "s" : ""} × ${fmtINR(quote?.room_rate ?? selectedRoom.rate)}`} />
             <Row k="Subtotal" v={fmtINR(subtotal)} />
-            <Row k="GST (18%)" v={fmtINR(tax)} />
-            <div className="border-t pt-3"><Row k="Total" v={<span className="text-lg font-semibold">{fmtINR(total)}</span>} /></div>
-            <div className="pt-4">
-              <Label>Booking source</Label>
-              <Select value={r.source} onValueChange={(v) => setR({ ...r, source: v })}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {BOOKING_SOURCES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                </SelectContent>
-              </Select>
+            {discount > 0 && <Row k={`Discount (${appliedPromo})`} v={<span className="text-success">−{fmtINR(discount)}</span>} />}
+            <Row k={quote ? `GST (${quote.tax_rate}%)` : "GST"} v={fmtINR(tax)} />
+            <div className="border-t pt-3">
+              <Row k="Payable" v={<span className="text-lg font-semibold">{quoteQ.isLoading ? "…" : fmtINR(total)}</span>} />
             </div>
+
+            <div className="pt-2">
+              <Label>Promo code</Label>
+              <div className="flex gap-2 mt-1">
+                <Input
+                  value={r.promoCode}
+                  onChange={(e) => setR({ ...r, promoCode: e.target.value.toUpperCase() })}
+                  placeholder="SUMMER25"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!r.promoCode.trim() || quoteQ.isFetching}
+                  onClick={() => setAppliedPromo(r.promoCode.trim())}
+                >
+                  Apply
+                </Button>
+                {appliedPromo && (
+                  <Button type="button" variant="ghost" onClick={() => { setAppliedPromo(""); setR({ ...r, promoCode: "" }); }}>
+                    Clear
+                  </Button>
+                )}
+              </div>
+              {/* The server is the judge of a code. It re-checks on submit, so
+                  a code that lapses between quoting and confirming is caught
+                  there too rather than silently charging full price. */}
+              {appliedPromo && !quoteQ.isFetching && discount === 0 && (
+                <p className="text-xs text-destructive mt-1">
+                  {appliedPromo} did not apply to this stay.
+                </p>
+              )}
+            </div>
+
+            <div className="pt-2 border-t">
+              <label className="flex items-center gap-2 py-3 cursor-pointer">
+                <input type="checkbox" checked={pay.take} onChange={(e) => setPay({ ...pay, take: e.target.checked })} />
+                <span className="font-medium">Take payment now</span>
+                <span className="text-muted-foreground text-xs">
+                  raises the receipt voucher, ledger entry, sales invoice and customer record
+                </span>
+              </label>
+
+              {pay.take && (
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Payment method">
+                    <Select value={pay.method} onValueChange={(v) => setPay({ ...pay, method: v as ReservationPaymentInput["method"] })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {PAYMENT_METHODS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <div />
+
+                  {pay.method === "upi" && (
+                    <>
+                      <Field label="UPI ID *"><Input value={pay.upiId} onChange={(e) => setPay({ ...pay, upiId: e.target.value })} placeholder="guest@okaxis" /></Field>
+                      <Field label="Transaction ID *"><Input value={pay.transactionRef} onChange={(e) => setPay({ ...pay, transactionRef: e.target.value })} /></Field>
+                    </>
+                  )}
+
+                  {pay.method === "card" && (
+                    <>
+                      <Field label="Card last 4 digits">
+                        <Input
+                          inputMode="numeric"
+                          maxLength={4}
+                          value={pay.cardLast4}
+                          onChange={(e) => setPay({ ...pay, cardLast4: e.target.value.replace(/\D/g, "").slice(0, 4) })}
+                          placeholder="4242"
+                        />
+                        {/* Four digits, never the full number: anything sent
+                            here also lands in the request logs and in every
+                            database backup. */}
+                        <p className="text-xs text-muted-foreground mt-1">Last 4 only — never enter the full card number.</p>
+                      </Field>
+                      <Field label="Auth / approval code *"><Input value={pay.authCode} onChange={(e) => setPay({ ...pay, authCode: e.target.value })} /></Field>
+                    </>
+                  )}
+
+                  {pay.method === "cash" && (
+                    <>
+                      <Field label="Cash received *">
+                        <Input type="number" min={0} value={pay.cashReceived} onChange={(e) => setPay({ ...pay, cashReceived: e.target.value })} />
+                      </Field>
+                      <Field label="Change to give"><div className="h-10 flex items-center font-medium">{fmtINR(changeDue)}</div></Field>
+                    </>
+                  )}
+
+                  {pay.method === "credit" && (
+                    <p className="col-span-2 text-xs text-muted-foreground">
+                      Nothing is collected now. This books a receivable against the customer, so a phone or email is required.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div>
               <Label>Special requests</Label>
               <Textarea className="mt-1" value={r.notes} onChange={(e) => setR({ ...r, notes: e.target.value })} placeholder="Late check-in, dietary, accessibility…" />
@@ -241,8 +467,20 @@ function NewReservation() {
               <Field label="Source"><div className="font-medium">{r.source}</div></Field>
               <Field label="Room"><div className="font-medium">{selectedRoom.number} · {selectedRoom.type}</div></Field>
               <Field label="Stay"><div>{r.checkIn} → {r.checkOut} ({nights} nights)</div></Field>
-              <Field label="Total"><div className="font-semibold text-lg">{fmtINR(total)}</div></Field>
+              <Field label="Occupancy"><div>{g.adults} adult{g.adults > 1 ? "s" : ""}{g.children > 0 ? `, ${g.children} child${g.children > 1 ? "ren" : ""}` : ""}</div></Field>
+              <Field label="Payment">
+                <div className="font-medium">
+                  {pay.take ? PAYMENT_METHODS.find((m) => m.value === pay.method)?.label : "Not taken yet"}
+                </div>
+              </Field>
+              <Field label="Payable"><div className="font-semibold text-lg">{fmtINR(total)}</div></Field>
             </div>
+            {pay.take && (
+              <p className="text-xs text-muted-foreground">
+                Confirming records the payment and posts the receipt voucher, ledger entry and sales invoice
+                against the customer — all in one transaction, so nothing lands half-done.
+              </p>
+            )}
           </div>
         )}
 
@@ -251,13 +489,21 @@ function NewReservation() {
           {step < 4 ? (
             <Button
               onClick={() => setStep(step + 1)}
-              disabled={(step === 1 && (!g.name || !g.phone)) || (step === 2 && !r.roomId)}
+              disabled={
+                // At least one contact detail: the API requires it, because
+                // without a phone or an email a returning guest can never be
+                // matched and no folio can be opened at check-in.
+                (step === 1 && (!g.name || (!g.phone && !g.email))) ||
+                (step === 2 && !r.roomId) ||
+                (step === 3 && !paymentReady)
+              }
             >
               Continue <ArrowRight className="size-4" />
             </Button>
           ) : (
-            <Button onClick={submit} disabled={createRes.isPending}>
-              {createRes.isPending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />} Confirm reservation
+            <Button onClick={submit} disabled={createRes.isPending || !paymentReady}>
+              {createRes.isPending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+              {pay.take ? " Confirm & take payment" : " Confirm reservation"}
             </Button>
           )}
         </div>
