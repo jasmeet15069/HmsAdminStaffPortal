@@ -7,7 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiFetch } from "./client";
+import { apiFetch, apiUpload } from "./client";
 import { isAuthenticated } from "./auth";
 import type {
   ApiUser,
@@ -197,6 +197,40 @@ export function useCreateReservation() {
       qc.invalidateQueries({ queryKey: ["accounting"] });
       qc.invalidateQueries({ queryKey: ["rooms"] });
     },
+  });
+}
+
+/** Uploads a guest ID document against a reservation.
+ *
+ *  Two steps rather than one, because the document is filed against a
+ *  reservation id that does not exist until the booking is created. The wizard
+ *  therefore creates the booking first and uploads immediately after — and a
+ *  failed upload must not lose the booking, so it is reported separately rather
+ *  than failing the whole submission. */
+export function useUploadReservationDocument() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      reservationId,
+      file,
+      docType,
+      docNumber,
+    }: {
+      reservationId: string;
+      file: File;
+      docType: string;
+      docNumber?: string;
+    }) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("doc_type", docType);
+      if (docNumber) form.append("doc_number", docNumber);
+      return apiUpload<{ id: string; mime_type: string; size_bytes: number }>(
+        `/api/reservations/${reservationId}/documents`,
+        form,
+      );
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["reservations"] }),
   });
 }
 

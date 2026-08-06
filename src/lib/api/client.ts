@@ -30,6 +30,34 @@ export function getRefreshToken(): string | null {
   return isBrowser ? window.localStorage.getItem(REFRESH_KEY) : null;
 }
 
+/** Uploads a file as multipart/form-data.
+ *
+ *  Separate from apiFetch because that one JSON-stringifies its body and sets
+ *  `Content-Type: application/json`. For multipart the boundary has to be
+ *  chosen by the browser, so the header must be left unset — setting it by hand
+ *  produces a body the server cannot parse.
+ *
+ *  No transparent 401 retry here: a FormData body containing a File cannot be
+ *  replayed reliably after a token refresh, so a stale session surfaces as an
+ *  error the caller handles rather than a silent half-upload. */
+export async function apiUpload<T>(
+  path: string,
+  form: FormData,
+): Promise<T> {
+  const headers: Record<string, string> = {};
+  const token = getAccessToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const p = path.startsWith("/") ? path : `/${path}`;
+  const res = await fetch(`${API_URL}${p}`, { method: "POST", headers, body: form });
+
+  const json = (await res.json().catch(() => ({}))) as { data?: T; error?: string };
+  if (!res.ok) {
+    throw new Error(json.error || `upload failed (${res.status})`);
+  }
+  return json.data as T;
+}
+
 export function setTokens(session: Session): void {
   if (!isBrowser) return;
   window.localStorage.setItem(ACCESS_KEY, session.access_token);

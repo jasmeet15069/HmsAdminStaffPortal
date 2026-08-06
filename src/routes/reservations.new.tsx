@@ -2,7 +2,12 @@ import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router"
 import { PageHeader } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useAvailableRooms, useCreateReservation, useReservationQuote } from "@/lib/api/hooks";
+import {
+  useAvailableRooms,
+  useCreateReservation,
+  useReservationQuote,
+  useUploadReservationDocument,
+} from "@/lib/api/hooks";
 import type { ReservationPaymentInput } from "@/lib/api/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -73,6 +78,8 @@ function NewReservation() {
   const { walkin } = useSearch({ from: "/reservations/new" });
   const authed = !!useAuth((s) => s.user);
   const createRes = useCreateReservation();
+  const uploadDoc = useUploadReservationDocument();
+  const [idFile, setIdFile] = useState<File | null>(null);
 
   const { rooms, addGuest, addReservation } = useMHMS();
   const [step, setStep] = useState(1);
@@ -210,7 +217,7 @@ function NewReservation() {
           payment,
         },
         {
-          onSuccess: (res) => {
+          onSuccess: async (res) => {
             // Name what the submission actually produced. A settled booking
             // writes a customer, an invoice and a numbered voucher, and the
             // desk should be able to quote the invoice number immediately.
@@ -220,6 +227,24 @@ function NewReservation() {
                 ? `Reservation ${res?.confirmation_no ?? ""} created and settled · invoice ${inv}`
                 : `Reservation ${res?.confirmation_no ?? ""} created for ${g.name}`,
             );
+
+            // The document is filed against a reservation id that did not exist
+            // until a moment ago, so it uploads second. A failed upload must not
+            // discard a booking that is already taken and paid for — it is
+            // reported on its own and the ID can be attached from the
+            // reservation afterwards.
+            if (idFile && res?.id && g.idType) {
+              try {
+                await uploadDoc.mutateAsync({
+                  reservationId: res.id,
+                  file: idFile,
+                  docType: g.idType,
+                  docNumber: g.idNumber || undefined,
+                });
+              } catch (e: any) {
+                toast.error(`Booking saved, but the ID document did not upload: ${e?.message ?? "unknown error"}`);
+              }
+            }
             nav({ to: "/reservations" });
           },
           onError: (e: any) => toast.error(e?.message ?? "Failed to create reservation"),
@@ -308,6 +333,25 @@ function NewReservation() {
             <Field label="ID number">
               <Input value={g.idNumber} onChange={(e) => setG({ ...g, idNumber: e.target.value })} placeholder="Document number" />
             </Field>
+            <Field label="ID document">
+              {/* The server decides the type from the file's leading bytes, so
+                  this accept list is a convenience for the file picker and not
+                  the check that matters. Max 5 MB. */}
+              <Input
+                type="file"
+                accept="image/jpeg,image/png,application/pdf"
+                onChange={(e) => setIdFile(e.target.files?.[0] ?? null)}
+              />
+              {idFile && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {idFile.name} · {(idFile.size / 1024).toFixed(0)} KB
+                  {idFile.size > 5 * 1024 * 1024 && (
+                    <span className="text-destructive"> — over the 5 MB limit</span>
+                  )}
+                </p>
+              )}
+            </Field>
+            <div />
             <Field label="Adults"><Input type="number" min={1} value={g.adults} onChange={(e) => setG({ ...g, adults: +e.target.value })} /></Field>
             <Field label="Children"><Input type="number" min={0} value={g.children} onChange={(e) => setG({ ...g, children: +e.target.value })} /></Field>
             <Field label="Check-in date *"><Input type="date" value={r.checkIn} onChange={(e) => setR({ ...r, checkIn: e.target.value })} /></Field>
