@@ -33,7 +33,10 @@ export const Route = createFileRoute("/accounting")({
   head: () => ({ meta: [{ title: "Accounting · MHMS" }] }),
 });
 
-const fmtCurr = (n: number) => (n ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
+// Rupees, like every other amount in the product. This was formatting the
+// whole accounting module in US dollars because the helper said so.
+const fmtCurr = (n: number) =>
+  (n ?? 0).toLocaleString("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2 });
 
 const cap = (s: string) => s ? s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : s;
 const fmtDate = (d: string | null | undefined) => d ? new Date(d + (d.includes("T") ? "" : "T00:00:00")).toLocaleDateString("en-CA") : "—";
@@ -181,7 +184,7 @@ function ChartOfAccountsTab({ accounts, isLoading }: { accounts: Account[]; isLo
   const createAcct = useCreateAccount();
   const updateAcct = useUpdateAccount();
   const deleteAcct = useDeleteAccount();
-  const [form, setForm] = useState({ code: "", name: "", type: "asset", sub_type: "", opening_balance: 0, currency: "USD", display_order: 0 });
+  const [form, setForm] = useState({ code: "", name: "", type: "asset", sub_type: "", opening_balance: 0, currency: "INR", display_order: 0 });
 
   const filtered = accounts.filter((a) => {
     const ms = a.code.toLowerCase().includes(search.toLowerCase()) || a.name.toLowerCase().includes(search.toLowerCase());
@@ -196,7 +199,7 @@ function ChartOfAccountsTab({ accounts, isLoading }: { accounts: Account[]; isLo
       : createAcct.mutateAsync(form);
     mutate.then(() => {
       toast.success(edit ? "Account updated" : "Account created");
-      setCreateOpen(false); setEdit(null); setForm({ code: "", name: "", type: "asset", sub_type: "", opening_balance: 0, currency: "USD", display_order: 0 });
+      setCreateOpen(false); setEdit(null); setForm({ code: "", name: "", type: "asset", sub_type: "", opening_balance: 0, currency: "INR", display_order: 0 });
     }).catch((e: any) => toast.error(e.message ?? "Failed"));
   };
 
@@ -208,7 +211,7 @@ function ChartOfAccountsTab({ accounts, isLoading }: { accounts: Account[]; isLo
 
   const openCreate = () => {
     setEdit(null);
-    setForm({ code: "", name: "", type: "asset", sub_type: "", opening_balance: 0, currency: "USD", display_order: 0 });
+    setForm({ code: "", name: "", type: "asset", sub_type: "", opening_balance: 0, currency: "INR", display_order: 0 });
     setCreateOpen(true);
   };
 
@@ -235,7 +238,7 @@ function ChartOfAccountsTab({ accounts, isLoading }: { accounts: Account[]; isLo
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b">
-                {["Code", "Name", "Type", "Sub Type", "Opening Balance", "Status", "Actions"].map((h) => (
+                {["Code", "Name", "Type", "Sub Type", "Opening", "Balance", "Status", "Actions"].map((h) => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">{h}</th>
                 ))}
               </tr>
@@ -247,7 +250,9 @@ function ChartOfAccountsTab({ accounts, isLoading }: { accounts: Account[]; isLo
                   <td className="px-4 py-3">{a.name}</td>
                   <td className="px-4 py-3"><Badge variant="outline" className="text-[10px]">{cap(a.type)}</Badge></td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">{a.sub_type || "—"}</td>
-                  <td className="px-4 py-3 font-medium">{fmtCurr(a.opening_balance)}</td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">{fmtCurr(a.opening_balance)}</td>
+                  {/* The figure people come to this screen for. */}
+                  <td className="px-4 py-3 font-medium">{fmtCurr(a.balance ?? a.opening_balance)}</td>
                   <td className="px-4 py-3">
                     <Badge className={`text-[10px] ${a.is_active ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>{a.is_active ? "Active" : "Inactive"}</Badge>
                   </td>

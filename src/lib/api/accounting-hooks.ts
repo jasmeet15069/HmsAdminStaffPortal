@@ -5,6 +5,12 @@ import { isAuthenticated } from "./auth";
 export interface Account {
   id: string; code: string; name: string; type: string; sub_type: string;
   parent_code: string | null; opening_balance: number; currency: string;
+  /** Opening balance plus everything posted, signed by the account's natural
+   *  side so every balance reads positive. The list used to return only
+   *  opening_balance, which is 0 for any account nobody explicitly seeded — so
+   *  the whole chart sat at zero while the trial balance showed real money, and
+   *  it read as broken rather than as the wrong column. */
+  balance?: number;
   is_active: boolean; display_order: number;
   created_at: string; updated_at: string;
 }
