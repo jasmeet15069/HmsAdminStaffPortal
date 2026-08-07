@@ -2,7 +2,7 @@ import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-r
 import { PageHeader } from "@/components/AppShell";
 import { useMHMS, resStatusMeta, fmtINR, type ResStatus } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useReservations, useCheckIn, useCheckOut } from "@/lib/api/hooks";
+import { useReservations, useCheckIn, useCheckOut, useCancelReservation } from "@/lib/api/hooks";
 import type { Reservation as ApiReservation } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +24,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, Eye, LogIn, LogOut, Loader2 } from "lucide-react";
+import { Plus, Search, Eye, LogIn, LogOut, Loader2, X } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 
@@ -61,6 +61,7 @@ interface Row {
   statusColor: string;
   canCheckIn: boolean;
   canCheckOut: boolean;
+  canCancel: boolean;
 }
 
 // Live API status -> unified bucket + presentation.
@@ -120,6 +121,7 @@ function ReservationsPage() {
   const { reservations, guests, rooms, cancelReservation, checkIn, checkOut } = useMHMS();
   const checkInM = useCheckIn();
   const checkOutM = useCheckOut();
+  const cancelM = useCancelReservation();
 
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<string>("all");
@@ -148,6 +150,7 @@ function ReservationsPage() {
           statusColor: meta.color,
           canCheckIn: r.status === "upcoming" || r.status === "pending_checkin",
           canCheckOut: r.status === "in_house",
+          canCancel: r.status === "upcoming" || r.status === "pending_checkin",
         };
       });
     }
@@ -175,6 +178,7 @@ function ReservationsPage() {
         statusColor: meta.color,
         canCheckIn: r.status === "confirmed",
         canCheckOut: r.status === "checked_in",
+        canCancel: r.status === "confirmed" || r.status === "pending",
       };
     });
   }, [isLive, live.data, reservations, guests, rooms]);
@@ -221,6 +225,22 @@ function ReservationsPage() {
       toast.success("Guest checked out");
     }
     setOpen(null);
+  };
+  const doCancel = (id: string) => {
+    if (!window.confirm("Cancel this reservation? Paid reservations must be refunded or credited first.")) return;
+    if (isLive) {
+      cancelM.mutate(id, {
+        onSuccess: () => {
+          toast.success("Reservation cancelled");
+          setOpen(null);
+        },
+        onError: (e: any) => toast.error(e.message ?? "Cancel failed"),
+      });
+    } else {
+      cancelReservation(id);
+      toast.success("Reservation cancelled");
+      setOpen(null);
+    }
   };
 
   return (
@@ -397,15 +417,13 @@ function ReservationsPage() {
                     Check Out
                   </Button>
                 )}
-                {!isLive && sel.bucket === "upcoming" && (
+                {sel.canCancel && (
                   <Button
                     variant="destructive"
-                    onClick={() => {
-                      cancelReservation(sel.id);
-                      toast.success("Reservation cancelled");
-                      setOpen(null);
-                    }}
+                    disabled={cancelM.isPending}
+                    onClick={() => doCancel(sel.id)}
                   >
+                    {cancelM.isPending ? <Loader2 className="size-4 animate-spin" /> : <X className="size-4" />}
                     Cancel
                   </Button>
                 )}

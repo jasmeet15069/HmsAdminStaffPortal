@@ -174,10 +174,13 @@ function ReservationDetail() {
                   <Button
                     variant="destructive"
                     disabled={cancelM.isPending}
-                    onClick={() => cancelM.mutate(id, {
-                      onSuccess: () => { toast.success("Reservation cancelled"); nav({ to: "/reservations" }); },
-                      onError: (e: any) => toast.error(e.message ?? "Cancel failed"),
-                    })}
+                    onClick={() => {
+                      if (!window.confirm("Cancel this reservation? Paid reservations must be refunded or credited first.")) return;
+                      cancelM.mutate(id, {
+                        onSuccess: () => { toast.success("Reservation cancelled"); nav({ to: "/reservations" }); },
+                        onError: (e: any) => toast.error(e.message ?? "Cancel failed"),
+                      });
+                    }}
                   >
                     {cancelM.isPending ? <Loader2 className="size-4 animate-spin" /> : <X className="size-4" />}
                     Cancel
