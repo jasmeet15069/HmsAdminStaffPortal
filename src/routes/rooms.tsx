@@ -29,7 +29,6 @@ export const Route = createFileRoute("/rooms")({
   component: RoomManagement,
 });
 
-const STATUSES: RoomStatus[] = ["available", "occupied", "cleaning", "maintenance"];
 const ROOM_TYPES = ["Standard Single", "Standard Double", "Deluxe", "Suite", "Executive", "Family"];
 
 // Blueprint for the bulk-upload spreadsheet template. The header order here is
@@ -50,7 +49,16 @@ const statusMeta: Record<RoomStatus, { label: string; color: string }> = {
   occupied: { label: "Occupied", color: "bg-info/15 text-info border-info/30" },
   cleaning: { label: "Cleaning", color: "bg-warning/20 text-warning-foreground border-warning/40" },
   maintenance: { label: "Maintenance", color: "bg-destructive/15 text-destructive border-destructive/30" },
+  // Muted rather than destructive: an out-of-order room is not an alarm, it is
+  // inventory deliberately withdrawn from sale.
+  out_of_order: { label: "Out of Order", color: "bg-muted text-muted-foreground border-border" },
 };
+
+// Derived, not hand-listed. A `RoomStatus[]` literal only fails typecheck on an
+// invalid member, never a missing one, so a status added to the union would
+// silently never appear in the dropdown — which is how a room could be given a
+// state the desk had no way to set.
+const STATUSES = Object.keys(statusMeta) as RoomStatus[];
 
 type FormState = {
   room_number: string; room_type: string; floor: string; capacity: string;

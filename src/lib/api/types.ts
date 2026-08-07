@@ -19,7 +19,16 @@ export interface Session {
   user: SessionUser | null;
 }
 
-export type RoomStatus = "available" | "occupied" | "cleaning" | "maintenance";
+/** Mirrors domain.RoomStatus. `out_of_order` is a room withdrawn from sale —
+ *  flood damage, a failed AC, refurbishment — as opposed to `maintenance`,
+ *  which means someone is working on it and it is expected back shortly. Both
+ *  are unsellable, but only out-of-order should read as lost inventory. */
+export type RoomStatus =
+  | "available"
+  | "occupied"
+  | "cleaning"
+  | "maintenance"
+  | "out_of_order";
 
 export interface Room {
   id: string;

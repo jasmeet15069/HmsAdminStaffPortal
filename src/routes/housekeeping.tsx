@@ -22,8 +22,12 @@ export const Route = createFileRoute("/housekeeping")({
   component: Housekeeping,
 });
 
+// out_of_order maps to the board's `blocked`, not `maintenance`: housekeeping
+// should see a withdrawn room as off the board entirely rather than queued for
+// someone to work on.
 const apiRoomStatusToDemo: Record<ApiRoomStatus, RoomStatus> = {
-  available: "vacant_clean", occupied: "occupied", cleaning: "vacant_dirty", maintenance: "maintenance",
+  available: "vacant_clean", occupied: "occupied", cleaning: "vacant_dirty",
+  maintenance: "maintenance", out_of_order: "blocked",
 };
 
 interface GridCell { id: string; number: string; type: string; floor: number; status: RoomStatus; lastCleaned?: string; }

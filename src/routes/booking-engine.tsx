@@ -192,6 +192,10 @@ function BookingEngine() {
     }
   };
 
+  // These rooms come from the demo store, whose statuses are the housekeeping
+  // vocabulary (vacant_clean, blocked, …) rather than the API's. `blocked` is
+  // its equivalent of out-of-order and is already excluded by not being listed
+  // as active anywhere below.
   const activeRooms = rooms.filter((r) => r.status !== "maintenance");
   const convRate = ((FUNNEL_DATA[5].value / FUNNEL_DATA[0].value) * 100).toFixed(1);
   const roomTypes = Array.from(new Set(activeRooms.map((r) => r.type))).map((t) => {

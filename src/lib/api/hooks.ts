@@ -200,6 +200,30 @@ export function useCreateReservation() {
   });
 }
 
+/** Moves a stay to a different room.
+ *
+ *  The desk does this constantly — a noise complaint, a room that fails after
+ *  arrival, an upgrade. Before this the only route was cancel-and-rebook, which
+ *  discards the confirmation number, the folio and everything charged to it.
+ *
+ *  Invalidates rooms as well as reservations: an in-house move changes both
+ *  rooms' statuses and raises a housekeeping task for the one vacated. */
+export function useMoveRoom() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, roomId, reason }: { id: string; roomId: string; reason?: string }) =>
+      apiFetch<{ room_number: string; repriced: boolean }>(`/api/reservations/${id}/move-room`, {
+        method: "POST",
+        body: { room_id: roomId, reason },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reservations"] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+      qc.invalidateQueries({ queryKey: ["housekeeping"] });
+    },
+  });
+}
+
 /** Uploads a guest ID document against a reservation.
  *
  *  Two steps rather than one, because the document is filed against a

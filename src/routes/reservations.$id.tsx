@@ -15,6 +15,8 @@ import {
   useRecordFolioPayment,
   useGenerateInvoice,
   useEmailInvoice,
+  useMoveRoom,
+  useAvailableRooms,
 } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,7 +29,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  ArrowLeft, LogIn, LogOut, Plus, Printer, X, FileText, Loader2, CreditCard, Mail,
+  ArrowLeft, LogIn, LogOut, Plus, Printer, X, FileText, Loader2, CreditCard, Mail, ArrowLeftRight,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
@@ -78,6 +80,10 @@ function ReservationDetail() {
   const [chargeOpen, setChargeOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [moveRoomId, setMoveRoomId] = useState("");
+  const [moveReason, setMoveReason] = useState("");
+  const moveM = useMoveRoom();
   const [charge, setCharge] = useState({ description: "", amount: "", category: "F&B", tax_pct: "18" });
   const [pay, setPay] = useState({ amount: "", method: "Card", reference: "" });
 
@@ -198,6 +204,14 @@ function ReservationDetail() {
                   Check Out
                 </Button>
               ) : null}
+              {/* A move is valid right up until departure — a guest complains
+                  about noise on their second night as readily as on arrival —
+                  so this sits outside the check-in/check-out branch above. */}
+              {(r.status === "pending_checkin" || r.status === "upcoming" || r.status === "in_house") && (
+                <Button variant="outline" onClick={() => setMoveOpen(true)}>
+                  <ArrowLeftRight className="size-4" /> Move Room
+                </Button>
+              )}
             </div>
           }
         />
@@ -487,6 +501,39 @@ function ReservationDetail() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <MoveRoomDialog
+          open={moveOpen}
+          onOpenChange={(v) => { setMoveOpen(v); if (!v) { setMoveRoomId(""); setMoveReason(""); } }}
+          checkIn={r.check_in_date?.slice(0, 10) ?? ""}
+          checkOut={r.check_out_date?.slice(0, 10) ?? ""}
+          currentRoomId={r.room_id ?? ""}
+          currentRoomNumber={r.room_number ?? ""}
+          roomId={moveRoomId}
+          setRoomId={setMoveRoomId}
+          reason={moveReason}
+          setReason={setMoveReason}
+          pending={moveM.isPending}
+          onConfirm={() =>
+            moveM.mutate(
+              { id, roomId: moveRoomId, reason: moveReason || undefined },
+              {
+                onSuccess: (res) => {
+                  toast.success(
+                    res?.repriced
+                      ? `Moved to room ${res.room_number} and repriced`
+                      : `Moved to room ${res?.room_number ?? ""}`,
+                  );
+                  setMoveOpen(false);
+                  setMoveRoomId("");
+                  setMoveReason("");
+                  detailQ.refetch();
+                },
+                onError: (e: any) => toast.error(e?.message ?? "Room move failed"),
+              },
+            )
+          }
+        />
       </>
     );
   }
@@ -763,5 +810,96 @@ function ModifyForm({
         </Button>
       </DialogFooter>
     </>
+  );
+}
+
+/** Room picker for moving a stay.
+ *
+ *  Lists rooms free for THIS stay's dates rather than rooms free right now:
+ *  filtering by current status would hide a room whose present guest leaves
+ *  before this one arrives, which is the same mistake the booking wizard used
+ *  to make. The stay's own room is excluded because the API rejects a move to
+ *  the room it is already in.
+ *
+ *  The list is advisory. The server re-checks availability and the overlap
+ *  constraint has the final say, so a room taken between opening this dialog
+ *  and confirming comes back as a clear conflict rather than a silent
+ *  double-booking. */
+function MoveRoomDialog({
+  open, onOpenChange, checkIn, checkOut, currentRoomId, currentRoomNumber,
+  roomId, setRoomId, reason, setReason, pending, onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  checkIn: string;
+  checkOut: string;
+  currentRoomId: string;
+  currentRoomNumber: string;
+  roomId: string;
+  setRoomId: (v: string) => void;
+  reason: string;
+  setReason: (v: string) => void;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  const roomsQ = useAvailableRooms(checkIn, checkOut);
+  const options = (roomsQ.data ?? []).filter((rm) => rm.id !== currentRoomId);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Move room</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Currently in room {currentRoomNumber || "—"}. Showing rooms free for {checkIn} → {checkOut}.
+          </p>
+
+          {roomsQ.isLoading ? (
+            <div className="flex justify-center py-6"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
+          ) : options.length === 0 ? (
+            <p className="text-sm text-destructive">
+              No other room is free for these dates.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <Label>New room</Label>
+              <Select value={roomId} onValueChange={setRoomId}>
+                <SelectTrigger><SelectValue placeholder="Select a room…" /></SelectTrigger>
+                <SelectContent>
+                  {options.map((rm) => (
+                    <SelectItem key={rm.id} value={rm.id}>
+                      {rm.room_number} · {rm.room_type} · sleeps {rm.capacity} · {fmtINR(rm.price_per_night)}/night
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Label>Reason</Label>
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Noise complaint, upgrade, AC fault…" />
+          </div>
+
+          {/* Says what will happen to the money. An unpaid stay reprices to the
+              new room's rate; a paid one keeps the amount already invoiced,
+              because changing it would put the reservation and the ledger out
+              of step. */}
+          <p className="text-xs text-muted-foreground">
+            An unsettled booking is repriced at the new room's rate. A settled one keeps its
+            invoiced amount — use a refund or credit note for any difference.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button disabled={!roomId || pending} onClick={onConfirm}>
+            {pending ? <Loader2 className="size-4 animate-spin" /> : <ArrowLeftRight className="size-4" />}
+            Move room
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
