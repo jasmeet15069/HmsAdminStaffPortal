@@ -202,6 +202,26 @@ export function useCreateReservation() {
   });
 }
 
+/** Restaurant analytics: hourly covers today, revenue for the last 7 days.
+ *
+ *  Both series come from the same records the till writes — covers from dining
+ *  sessions, revenue from settled bills — so the charts and the books cannot
+ *  disagree. The Restaurant screen previously drew hardcoded arrays here
+ *  regardless of whether the tenant was live. */
+export function usePosAnalytics() {
+  return useQuery({
+    queryKey: ["pos", "analytics"] as const,
+    queryFn: () =>
+      apiFetch<{
+        hourly_covers: { hour: number; covers: number }[];
+        weekly_revenue: { day: string; date: string; revenue: number }[];
+        empty: boolean;
+      }>("/api/pos/analytics"),
+    enabled: isAuthenticated(),
+    staleTime: 60_000,
+  });
+}
+
 /** The board for time-bound work — wake-up calls, scheduled pickups.
  *
  *  Polled rather than fetched once: a wake-up call is only useful if the desk

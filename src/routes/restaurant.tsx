@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useRestaurantTables, useWaitlist, useAddWaitlist, useUpdateWaitlist, useDeleteWaitlist } from "@/lib/api/hooks";
+import { useRestaurantTables, useWaitlist, useAddWaitlist, useUpdateWaitlist, useDeleteWaitlist, usePosAnalytics } from "@/lib/api/hooks";
 import { apiFetch } from "@/lib/api/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -146,6 +146,17 @@ function RestaurantPage() {
 
   const tablesLive = authed && !!tablesQ.data && tablesQ.data.length > 0;
   const waitlistLive = authed && !!waitlistQ.data;
+
+  // Charts come from the till's own records when signed in. They used to render
+  // hardcoded arrays unconditionally, so a real property saw invented covers and
+  // invented revenue under headings that read as fact.
+  const analyticsQ = usePosAnalytics();
+  const analyticsLive = authed && !!analyticsQ.data;
+  const hourlyCovers = analyticsLive ? analyticsQ.data!.hourly_covers : HOURLY_COVERS;
+  const weeklyRevenue = analyticsLive ? analyticsQ.data!.weekly_revenue : WEEKLY_REVENUE;
+  // A tenant with no restaurant activity gets an empty state rather than a flat
+  // line, which would otherwise read as a genuinely terrible week.
+  const analyticsEmpty = analyticsLive && analyticsQ.data!.empty;
 
   const [localFloor, setFloor] = useState<FloorTable[]>(INITIAL_FLOOR);
   const [localWaitlist, setWaitlist] = useState<WaitlistEntry[]>(INITIAL_WAITLIST);
@@ -421,28 +432,40 @@ function RestaurantPage() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <Card className="p-5">
-              <h3 className="font-semibold mb-4 flex items-center gap-2">Hourly Cover Count <span className="text-xs font-normal text-muted-foreground">— Today</span></h3>
+              <h3 className="font-semibold mb-4 flex items-center gap-2">
+                Hourly Cover Count <span className="text-xs font-normal text-muted-foreground">— Today</span>
+                {!analyticsLive && <Badge variant="outline" className="text-[10px]">Sample</Badge>}
+              </h3>
               <div className="h-52">
-                <ResponsiveContainer>
-                  <BarChart data={HOURLY_COVERS}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis dataKey="hour" fontSize={10} tickFormatter={(v) => `${v}:00`} />
-                    <YAxis fontSize={11} />
-                    <Tooltip formatter={(v: number) => [v, "Covers"]} labelFormatter={(l) => `${l}:00`} />
-                    <Bar dataKey="covers" fill="hsl(var(--chart-1))" radius={[3, 3, 0, 0]}>
-                      {HOURLY_COVERS.map((entry, i) => (
-                        <Cell key={i} fill={entry.covers >= 30 ? "hsl(var(--chart-1))" : "hsl(var(--chart-1)/0.5)"} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                {analyticsEmpty ? (
+                  <div className="h-full grid place-items-center text-sm text-muted-foreground text-center px-4">
+                    No covers recorded today. This fills in as tables are seated.
+                  </div>
+                ) : (
+                  <ResponsiveContainer>
+                    <BarChart data={hourlyCovers}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                      <XAxis dataKey="hour" fontSize={10} tickFormatter={(v) => `${v}:00`} />
+                      <YAxis fontSize={11} allowDecimals={false} />
+                      <Tooltip formatter={(v: number) => [v, "Covers"]} labelFormatter={(l) => `${l}:00`} />
+                      <Bar dataKey="covers" fill="hsl(var(--chart-1))" radius={[3, 3, 0, 0]}>
+                        {hourlyCovers.map((entry, i) => (
+                          <Cell key={i} fill={entry.covers >= 30 ? "hsl(var(--chart-1))" : "hsl(var(--chart-1)/0.5)"} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </Card>
             <Card className="p-5">
-              <h3 className="font-semibold mb-4 flex items-center gap-2">Weekly Revenue Trend</h3>
+              <h3 className="font-semibold mb-4 flex items-center gap-2">
+                Weekly Revenue Trend
+                {!analyticsLive && <Badge variant="outline" className="text-[10px]">Sample</Badge>}
+              </h3>
               <div className="h-52">
                 <ResponsiveContainer>
-                  <AreaChart data={WEEKLY_REVENUE}>
+                  <AreaChart data={weeklyRevenue}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                     <XAxis dataKey="day" fontSize={11} />
                     <YAxis fontSize={11} />
