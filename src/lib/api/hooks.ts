@@ -17,6 +17,7 @@ import type {
   CreatePosOrderBody,
   CreateReservationInput,
   CreateReservationResult,
+  CreateGuestRequestInput,
   CreateRoomInput,
   CreateTenantBody,
   BillingFolio,
@@ -29,6 +30,7 @@ import type {
   ConsolidatedReport,
   DashboardData,
   DashboardStats,
+  DueTask,
   GuestDetail,
   Campaign,
   Guest,
@@ -197,6 +199,53 @@ export function useCreateReservation() {
       qc.invalidateQueries({ queryKey: ["accounting"] });
       qc.invalidateQueries({ queryKey: ["rooms"] });
     },
+  });
+}
+
+/** The board for time-bound work — wake-up calls, scheduled pickups.
+ *
+ *  Polled rather than fetched once: a wake-up call is only useful if the desk
+ *  sees it before it is due, and a board left open all night would otherwise go
+ *  stale the moment it loaded. 30s is well inside the granularity anyone
+ *  schedules these to. */
+export function useDueTasks(withinMinutes = 60) {
+  return useQuery({
+    queryKey: ["housekeeping", "due", withinMinutes] as const,
+    queryFn: () =>
+      apiFetch<DueTask[] | null>("/api/housekeeping/due", {
+        query: { within_minutes: withinMinutes },
+      }).then((t) => t ?? []),
+    enabled: isAuthenticated(),
+    refetchInterval: 30_000,
+  });
+}
+
+/** Supervisor sign-off on completed work.
+ *
+ *  A pass releases the room back to `available`, so this invalidates rooms as
+ *  well — the room grid and the front desk's availability both change on it. */
+export function useInspectTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, passed, notes }: { id: string; passed: boolean; notes?: string }) =>
+      apiFetch(`/api/housekeeping/tasks/${id}/inspect`, {
+        method: "POST",
+        body: { passed, notes },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["housekeeping"] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+    },
+  });
+}
+
+/** Raises a guest request (wake-up call, bell boy, room service) against a stay. */
+export function useCreateGuestRequest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateGuestRequestInput) =>
+      apiFetch("/api/housekeeping/guest-requests", { method: "POST", body: input }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["housekeeping"] }),
   });
 }
 

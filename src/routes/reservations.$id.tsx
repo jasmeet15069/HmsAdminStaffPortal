@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, resStatusMeta, fmtINR } from "@/lib/mhms-store";
 import type { FolioCharge, Payment } from "@/lib/mhms-store";
+import { GUEST_REQUEST_TYPES } from "@/lib/api/types";
 import { isAuthenticated } from "@/lib/api/auth";
 import {
   useReservationDetail,
@@ -16,6 +17,7 @@ import {
   useGenerateInvoice,
   useEmailInvoice,
   useMoveRoom,
+  useCreateGuestRequest,
   useAvailableRooms,
 } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/card";
@@ -29,7 +31,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  ArrowLeft, LogIn, LogOut, Plus, Printer, X, FileText, Loader2, CreditCard, Mail, ArrowLeftRight,
+  ArrowLeft, LogIn, LogOut, Plus, Printer, X, FileText, Loader2, CreditCard, Mail, ArrowLeftRight, BellRing,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
@@ -84,6 +86,9 @@ function ReservationDetail() {
   const [moveRoomId, setMoveRoomId] = useState("");
   const [moveReason, setMoveReason] = useState("");
   const moveM = useMoveRoom();
+  const [reqOpen, setReqOpen] = useState(false);
+  const [req, setReq] = useState({ type: "wake_up_call", at: "", notes: "" });
+  const guestReqM = useCreateGuestRequest();
   const [charge, setCharge] = useState({ description: "", amount: "", category: "F&B", tax_pct: "18" });
   const [pay, setPay] = useState({ amount: "", method: "Card", reference: "" });
 
@@ -210,6 +215,14 @@ function ReservationDetail() {
               {(r.status === "pending_checkin" || r.status === "upcoming" || r.status === "in_house") && (
                 <Button variant="outline" onClick={() => setMoveOpen(true)}>
                   <ArrowLeftRight className="size-4" /> Move Room
+                </Button>
+              )}
+              {/* Only for a guest who is actually in the building — a wake-up
+                  call or a bell boy for someone who has not arrived is a job
+                  nobody can do. */}
+              {r.status === "in_house" && (
+                <Button variant="outline" onClick={() => setReqOpen(true)}>
+                  <BellRing className="size-4" /> Guest Request
                 </Button>
               )}
             </div>
@@ -501,6 +514,72 @@ function ReservationDetail() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <Dialog open={reqOpen} onOpenChange={setReqOpen}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Guest request</DialogTitle></DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label>Request</Label>
+                <Select value={req.type} onValueChange={(v) => setReq({ ...req, type: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {GUEST_REQUEST_TYPES.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* A wake-up call is defined by its time, and the API refuses one
+                  without it — so the field appears exactly when it is required
+                  rather than being an always-on box the desk learns to ignore. */}
+              {GUEST_REQUEST_TYPES.find((t) => t.value === req.type)?.needsTime && (
+                <div className="space-y-1.5">
+                  <Label>Time *</Label>
+                  <Input type="datetime-local" value={req.at} onChange={(e) => setReq({ ...req, at: e.target.value })} />
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <Label>Notes</Label>
+                <Textarea value={req.notes} onChange={(e) => setReq({ ...req, notes: e.target.value })} placeholder="Extra towels, call twice, leave outside the door…" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setReqOpen(false)}>Cancel</Button>
+              <Button
+                disabled={
+                  guestReqM.isPending ||
+                  (!!GUEST_REQUEST_TYPES.find((t) => t.value === req.type)?.needsTime && !req.at)
+                }
+                onClick={() =>
+                  guestReqM.mutate(
+                    {
+                      guest_stay_id: id,
+                      request_type: req.type,
+                      notes: req.notes || undefined,
+                      // datetime-local has no zone; the browser's own offset is
+                      // the right one, since the desk schedules in local time.
+                      scheduled_for: req.at ? new Date(req.at).toISOString() : undefined,
+                    },
+                    {
+                      onSuccess: () => {
+                        toast.success("Request raised");
+                        setReqOpen(false);
+                        setReq({ type: "wake_up_call", at: "", notes: "" });
+                      },
+                      onError: (e: any) => toast.error(e?.message ?? "Could not raise the request"),
+                    },
+                  )
+                }
+              >
+                {guestReqM.isPending ? <Loader2 className="size-4 animate-spin" /> : <BellRing className="size-4" />}
+                Raise request
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <MoveRoomDialog
           open={moveOpen}

@@ -200,6 +200,47 @@ export interface CreateReservationInput {
   payment?: ReservationPaymentInput;
 }
 
+/** A time-bound job: a wake-up call, a scheduled bell-boy pickup, anything with
+ *  a promised time. `overdue` is computed server-side against the database
+ *  clock, not the browser's — a desk machine with a skewed clock must not decide
+ *  whether a guest's wake-up call is late. */
+export interface DueTask {
+  id: string;
+  room_id: string;
+  room_number: string | null;
+  guest_stay_id: string | null;
+  guest_name: string | null;
+  task_type: string;
+  priority: string;
+  status: string;
+  scheduled_for: string;
+  overdue: boolean;
+  notes: string | null;
+}
+
+/** What a guest can ask for. Mirrors guestRequestTypes on the API, which in
+ *  turn mirrors the housekeeping_task_type_check constraint. */
+export const GUEST_REQUEST_TYPES = [
+  { value: "wake_up_call", label: "Wake-up call", needsTime: true },
+  { value: "bell_boy", label: "Bell boy", needsTime: false },
+  { value: "luggage", label: "Luggage assistance", needsTime: false },
+  { value: "room_service", label: "Room service", needsTime: false },
+  { value: "laundry_pickup", label: "Laundry pickup", needsTime: false },
+  { value: "amenity_request", label: "Amenity request", needsTime: false },
+  { value: "linen_change", label: "Linen change", needsTime: false },
+  { value: "turndown", label: "Turndown", needsTime: false },
+  { value: "guest_request", label: "Other request", needsTime: false },
+] as const;
+
+export interface CreateGuestRequestInput {
+  guest_stay_id: string;
+  request_type: string;
+  notes?: string;
+  /** RFC3339. Required by the API for a wake_up_call. */
+  scheduled_for?: string;
+  priority?: string;
+}
+
 /** Server-side price breakdown. The client never computes money itself: the
  *  wizard used to hardcode 18% GST and display a total it then never sent, so
  *  the guest agreed to one figure and the database stored another. */

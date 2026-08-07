@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PageHeader, Stat } from "@/components/AppShell";
 import { useMHMS, roomStatusMeta, type RoomStatus } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useRooms, useHousekeepingTasks, useUpdateHousekeepingTask, useUpdateRoomStatus, useCreateHousekeepingTask, useLostItems, useCreateLostItem, useUpdateLostItem } from "@/lib/api/hooks";
+import { useRooms, useHousekeepingTasks, useUpdateHousekeepingTask, useUpdateRoomStatus, useCreateHousekeepingTask, useLostItems, useCreateLostItem, useUpdateLostItem, useDueTasks, useInspectTask } from "@/lib/api/hooks";
 import type { RoomStatus as ApiRoomStatus } from "@/lib/api/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
-import { Plus, CheckCircle2, Package, Users, LayoutGrid, ClipboardList, Loader2 } from "lucide-react";
+import { Plus, CheckCircle2, Package, Users, LayoutGrid, ClipboardList, Loader2, BellRing, ShieldCheck } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -55,6 +55,16 @@ function Housekeeping() {
   const isLive = authed && !!liveRooms.data;
   const updateRoomM = useUpdateRoomStatus();
   const updateTaskM = useUpdateHousekeepingTask();
+  const inspectM = useInspectTask();
+  const [dueWindow, setDueWindow] = useState(60);
+  const dueQ = useDueTasks(dueWindow);
+  const overdueCount = (dueQ.data ?? []).filter((t) => t.overdue).length;
+
+  // The supervisor's queue: work reported done but not yet signed off. Read
+  // from the live task list rather than a second request — `completed` is
+  // exactly the state the inspect endpoint accepts, so the two agree by
+  // construction.
+  const awaitingInspection = (liveTasks.data ?? []).filter((t) => t.status === "completed");
   const createTaskM = useCreateHousekeepingTask();
   const lostItemsQ = useLostItems();
   const createLostM = useCreateLostItem();
@@ -230,9 +240,150 @@ function Housekeeping() {
             <ClipboardList className="size-3.5 mr-1.5" />Tasks
             {pendingCount > 0 && <Badge variant="destructive" className="ml-1.5 size-4 p-0 grid place-items-center text-[10px]">{pendingCount}</Badge>}
           </TabsTrigger>
+          <TabsTrigger value="due">
+            <BellRing className="size-3.5 mr-1.5" />Due
+            {/* Overdue is the count that matters — a wake-up call already late
+                is the one someone has to act on right now. */}
+            {overdueCount > 0 && <Badge variant="destructive" className="ml-1.5 size-4 p-0 grid place-items-center text-[10px]">{overdueCount}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="inspect">
+            <ShieldCheck className="size-3.5 mr-1.5" />Sign-off
+            {awaitingInspection.length > 0 && <Badge variant="secondary" className="ml-1.5 size-4 p-0 grid place-items-center text-[10px]">{awaitingInspection.length}</Badge>}
+          </TabsTrigger>
           <TabsTrigger value="staff"><Users className="size-3.5 mr-1.5" />Staff</TabsTrigger>
           <TabsTrigger value="lostfound"><Package className="size-3.5 mr-1.5" />Lost & Found</TabsTrigger>
         </TabsList>
+
+        {/* ── DUE: wake-up calls and scheduled work ──────────────────────────── */}
+        <TabsContent value="due">
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div>
+                <h3 className="font-semibold">Due soon</h3>
+                <p className="text-xs text-muted-foreground">
+                  Wake-up calls and scheduled jobs, including anything already overdue. Refreshes automatically.
+                </p>
+              </div>
+              <div className="flex gap-1.5">
+                {[60, 180, 720].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setDueWindow(m)}
+                    className={`px-2.5 py-1 rounded text-xs font-medium border transition ${dueWindow === m ? "bg-secondary text-secondary-foreground" : "hover:border-muted-foreground/40"}`}
+                  >
+                    {m < 60 ? `${m}m` : `${m / 60}h`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {dueQ.isLoading ? (
+              <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
+            ) : (dueQ.data ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">Nothing due in this window.</p>
+            ) : (
+              <div className="space-y-2">
+                {(dueQ.data ?? []).map((t) => (
+                  <div
+                    key={t.id}
+                    className={`flex items-center justify-between gap-3 border rounded-lg p-3 ${t.overdue ? "border-destructive/40 bg-destructive/5" : ""}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm">
+                        {t.task_type.replace(/_/g, " ")} · Room {t.room_number ?? "—"}
+                        {t.overdue && <Badge variant="destructive" className="ml-2 text-[10px]">Overdue</Badge>}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {t.guest_name ?? "—"}
+                        {" · "}
+                        {new Date(t.scheduled_for).toLocaleString()}
+                        {t.notes ? ` · ${t.notes}` : ""}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={updateTaskM.isPending}
+                      onClick={() =>
+                        updateTaskM.mutate(
+                          { id: t.id, patch: { status: "completed" } },
+                          {
+                            onSuccess: () => { toast.success("Marked done"); dueQ.refetch(); },
+                            onError: (e: any) => toast.error(e?.message ?? "Failed"),
+                          },
+                        )
+                      }
+                    >
+                      <CheckCircle2 className="size-3.5 mr-1" /> Done
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </TabsContent>
+
+        {/* ── SIGN-OFF: supervisor inspection queue ──────────────────────────── */}
+        <TabsContent value="inspect">
+          <Card className="p-4">
+            <h3 className="font-semibold mb-1">Awaiting sign-off</h3>
+            <p className="text-xs text-muted-foreground mb-3">
+              Completed work waiting on a supervisor. Passing a room releases it back to
+              available — the desk cannot sell it until then. Failing it sends the job back to
+              the floor.
+            </p>
+
+            {awaitingInspection.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">Nothing waiting on sign-off.</p>
+            ) : (
+              <div className="space-y-2">
+                {awaitingInspection.map((t) => (
+                  <div key={t.id} className="flex items-center justify-between gap-3 border rounded-lg p-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm">
+                        Room {t.room?.room_number ?? "—"} · {t.task_type.replace(/_/g, " ")}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {t.assigned_staff?.full_name ?? "unassigned"}
+                        {t.completed_at ? ` · completed ${new Date(t.completed_at).toLocaleString()}` : ""}
+                      </div>
+                    </div>
+                    <div className="flex gap-1.5 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={inspectM.isPending}
+                        onClick={() => {
+                          const notes = window.prompt("What needs redoing?") ?? "";
+                          if (!notes.trim()) return;
+                          inspectM.mutate({ id: t.id, passed: false, notes }, {
+                            onSuccess: () => toast.success("Sent back to the floor"),
+                            onError: (e: any) => toast.error(e?.message ?? "Failed"),
+                          });
+                        }}
+                      >
+                        Fail
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={inspectM.isPending}
+                        onClick={() =>
+                          inspectM.mutate({ id: t.id, passed: true }, {
+                            onSuccess: () => toast.success("Passed — room released"),
+                            onError: (e: any) => toast.error(e?.message ?? "Failed"),
+                          })
+                        }
+                      >
+                        {inspectM.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5 mr-1" />}
+                        Pass
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </TabsContent>
 
         {/* ── ROOM GRID ──────────────────────────────────────────────────────── */}
         <TabsContent value="grid">
