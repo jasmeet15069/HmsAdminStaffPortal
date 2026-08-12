@@ -23,7 +23,7 @@ import {
   useGRN, useCreateGRN, usePostGRN,
   useJournalEntries, useGetJournalEntry, useCreateJournalEntry,
   useTrialBalance,
-  type Account, type Customer, type Vendor, type SalesInvoice,
+  type Account, type Customer, type Vendor, type SalesInvoice, type SalesInvoiceDetail,
   type CreditNote, type DebitNote, type PurchaseOrder, type GRN,
   type JournalEntry, type JournalEntryDetail, type TrialBalanceRow,
 } from "@/lib/api/accounting-hooks";
@@ -670,14 +670,85 @@ function SalesInvoicesTab({ invoices, accounts, customers, isLoading }: { invoic
 
 function InvoiceDetailPanel({ invoiceId, accountMap, onClose }: { invoiceId: string; accountMap: Map<string, Account>; onClose: () => void }) {
   const { data, isLoading } = useGetSalesInvoice(invoiceId);
+  const postInv = usePostSalesInvoice();
+  const cancelInv = useCancelSalesInvoice();
+  const creditInv = useCreateCreditNoteFromInvoice();
+  const [editOpen, setEditOpen] = useState(false);
+
   if (isLoading) return <Card className="p-4 mt-3 flex justify-center"><Loader2 className="size-5 animate-spin text-muted-foreground" /></Card>;
   if (!data) return null;
+
+  // A draft has no journal entry behind it, so it can be changed freely. Once
+  // posted it does, and editing in place would leave the invoice saying one
+  // thing and the ledger another — so the API refuses it, and the correction is
+  // a credit note. The buttons follow that rather than offering an Edit that
+  // comes back 409.
+  const isDraft = data.status === "draft";
+  const isPosted = data.status === "posted";
+
   return (
     <Card className="p-4 mt-3">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
         <div><h4 className="font-semibold text-sm">{data.invoice_number}</h4><p className="text-xs text-muted-foreground">Status: <Badge className={`text-[10px] border ${STATUS_META[data.status]?.color ?? ""}`}>{cap(data.status)}</Badge></p></div>
-        <Button size="sm" variant="outline" className="h-7" onClick={onClose}>Close</Button>
+        <div className="flex gap-1.5 flex-wrap">
+          {isDraft && (
+            <>
+              <Button size="sm" variant="outline" className="h-7" onClick={() => setEditOpen(true)}>
+                <Pencil className="size-3 mr-1" />Edit
+              </Button>
+              <Button size="sm" className="h-7" disabled={postInv.isPending}
+                onClick={() => postInv.mutate(data.id, {
+                  onSuccess: () => toast.success("Invoice posted"),
+                  onError: (e: any) => toast.error(e.message),
+                })}>
+                {postInv.isPending ? <Loader2 className="size-3 animate-spin" /> : null} Post
+              </Button>
+            </>
+          )}
+          {isPosted && (
+            <Button size="sm" variant="outline" className="h-7 text-info" disabled={creditInv.isPending}
+              onClick={() => {
+                if (!window.confirm("Raise a credit note against this invoice? A posted invoice is corrected by reversing it, not by editing it.")) return;
+                creditInv.mutate(data.id, {
+                  onSuccess: () => toast.success("Credit note created"),
+                  onError: (e: any) => toast.error(e.message),
+                });
+              }}>
+              {creditInv.isPending ? <Loader2 className="size-3 animate-spin" /> : null} Credit Note
+            </Button>
+          )}
+          {(isDraft || isPosted) && (
+            <Button size="sm" variant="ghost" className="h-7 text-destructive" disabled={cancelInv.isPending}
+              onClick={() => {
+                if (!window.confirm("Cancel this invoice? This cannot be undone.")) return;
+                cancelInv.mutate(data.id, {
+                  onSuccess: () => { toast.success("Invoice cancelled"); onClose(); },
+                  onError: (e: any) => toast.error(e.message),
+                });
+              }}>
+              Cancel
+            </Button>
+          )}
+          <Button size="sm" variant="outline" className="h-7" onClick={onClose}>Close</Button>
+        </div>
       </div>
+
+      {/* Only reachable while the invoice is a draft, so the dialog never has to
+          handle a posted one. */}
+      {editOpen && (
+        <EditInvoiceDialog
+          invoice={data}
+          accountMap={accountMap}
+          onClose={() => setEditOpen(false)}
+        />
+      )}
+
+      {isPosted && (
+        <p className="text-[11px] text-muted-foreground mb-3 border-l-2 border-info/40 pl-2">
+          Posted invoices are not editable — they have a balanced journal entry behind them.
+          Raise a credit note to reverse it, then issue a corrected invoice.
+        </p>
+      )}
       <div className="grid grid-cols-4 gap-2 text-xs mb-3">
         <div><span className="text-muted-foreground">Date</span><div className="font-medium">{data.invoice_date}</div></div>
         <div><span className="text-muted-foreground">Due Date</span><div className="font-medium">{data.due_date || "—"}</div></div>
@@ -1377,5 +1448,156 @@ function TrialBalanceTab({ data, accounts, isLoading }: { data: TrialBalanceRow[
         </>
       )}
     </div>
+  );
+}
+
+/** Editing a draft sales invoice.
+ *
+ *  Only ever opened for a draft. A posted invoice has a balanced journal entry
+ *  behind it, so changing its amounts would leave the invoice and the ledger
+ *  disagreeing — the API refuses it with a 409 and the correction is a credit
+ *  note. The caller gates on status so this dialog never sees one.
+ *
+ *  Lines are edited in full and sent in full, because that is what PATCH
+ *  expects: it replaces the line set rather than patching individual lines, and
+ *  sending a subset would silently delete the rest.
+ */
+function EditInvoiceDialog({
+  invoice, accountMap, onClose,
+}: {
+  invoice: SalesInvoiceDetail;
+  accountMap: Map<string, Account>;
+  onClose: () => void;
+}) {
+  const updateInv = useUpdateSalesInvoice();
+  const accounts = Array.from(accountMap.values());
+
+  const [head, setHead] = useState({
+    invoice_date: invoice.invoice_date ?? "",
+    due_date: invoice.due_date ?? "",
+    reference: invoice.reference ?? "",
+    notes: invoice.notes ?? "",
+  });
+  const [lines, setLines] = useState(
+    invoice.lines.map((l) => ({
+      account_id: l.account_id ?? "",
+      description: l.description ?? "",
+      quantity: l.quantity ?? 1,
+      unit_price: l.unit_price ?? 0,
+      discount: l.discount ?? 0,
+      tax_rate: l.tax_rate ?? 0,
+    })),
+  );
+
+  const setLine = (i: number, patch: Partial<(typeof lines)[number]>) =>
+    setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+
+  // Totals are shown, not sent — the server recomputes them. A client-supplied
+  // total that disagrees with its own lines is how an invoice ends up saying
+  // something its line items do not support.
+  const calc = lines.map((l) => {
+    const net = l.quantity * l.unit_price - l.discount;
+    return { net, tax: Math.round(net * (l.tax_rate / 100) * 100) / 100 };
+  });
+  const subtotal = calc.reduce((s, c) => s + c.net, 0);
+  const taxTotal = calc.reduce((s, c) => s + c.tax, 0);
+
+  const save = () => {
+    if (lines.length === 0) {
+      toast.error("An invoice needs at least one line");
+      return;
+    }
+    if (lines.some((l) => !l.account_id)) {
+      toast.error("Every line needs an account");
+      return;
+    }
+    updateInv.mutate(
+      { id: invoice.id, body: { ...head, lines } },
+      {
+        onSuccess: () => { toast.success("Invoice updated"); onClose(); },
+        onError: (e: any) => toast.error(e.message ?? "Update failed"),
+      },
+    );
+  };
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader><DialogTitle>Edit {invoice.invoice_number}</DialogTitle></DialogHeader>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div><Label className="text-xs">Invoice Date</Label>
+            <Input className="h-8 mt-1" type="date" value={head.invoice_date}
+              onChange={(e) => setHead({ ...head, invoice_date: e.target.value })} /></div>
+          <div><Label className="text-xs">Due Date</Label>
+            <Input className="h-8 mt-1" type="date" value={head.due_date}
+              onChange={(e) => setHead({ ...head, due_date: e.target.value })} /></div>
+          <div><Label className="text-xs">Reference</Label>
+            <Input className="h-8 mt-1" value={head.reference}
+              onChange={(e) => setHead({ ...head, reference: e.target.value })} /></div>
+          <div><Label className="text-xs">Notes</Label>
+            <Input className="h-8 mt-1" value={head.notes}
+              onChange={(e) => setHead({ ...head, notes: e.target.value })} /></div>
+        </div>
+
+        <div className="mt-3 max-h-72 overflow-y-auto">
+          <table className="w-full text-xs">
+            <thead><tr className="border-b">
+              {["Account", "Description", "Qty", "Unit Price", "Disc", "Tax %", ""].map((h) => (
+                <th key={h} className="text-left py-1.5 text-muted-foreground font-medium">{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {lines.map((l, i) => (
+                <tr key={i} className="border-b last:border-0">
+                  <td className="py-1 pr-2">
+                    <select className="h-8 w-40 rounded border bg-background px-2 text-xs"
+                      value={l.account_id} onChange={(e) => setLine(i, { account_id: e.target.value })}>
+                      <option value="">Select…</option>
+                      {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
+                    </select>
+                  </td>
+                  <td className="py-1 pr-2"><Input className="h-8" value={l.description}
+                    onChange={(e) => setLine(i, { description: e.target.value })} /></td>
+                  <td className="py-1 pr-2"><Input className="h-8 w-16" type="number" value={l.quantity}
+                    onChange={(e) => setLine(i, { quantity: Number(e.target.value) || 0 })} /></td>
+                  <td className="py-1 pr-2"><Input className="h-8 w-24" type="number" value={l.unit_price}
+                    onChange={(e) => setLine(i, { unit_price: Number(e.target.value) || 0 })} /></td>
+                  <td className="py-1 pr-2"><Input className="h-8 w-20" type="number" value={l.discount}
+                    onChange={(e) => setLine(i, { discount: Number(e.target.value) || 0 })} /></td>
+                  <td className="py-1 pr-2"><Input className="h-8 w-16" type="number" value={l.tax_rate}
+                    onChange={(e) => setLine(i, { tax_rate: Number(e.target.value) || 0 })} /></td>
+                  <td className="py-1">
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-destructive"
+                      onClick={() => setLines((p) => p.filter((_, idx) => idx !== i))}>
+                      <Trash2 className="size-3" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-between mt-2">
+          <Button size="sm" variant="outline" className="h-7"
+            onClick={() => setLines((p) => [...p, { account_id: "", description: "", quantity: 1, unit_price: 0, discount: 0, tax_rate: 0 }])}>
+            <Plus className="size-3 mr-1" />Add line
+          </Button>
+          <div className="text-xs text-right">
+            <div>Subtotal: <span className="font-medium">{fmtCurr(subtotal)}</span></div>
+            <div>Tax: <span className="font-medium">{fmtCurr(taxTotal)}</span></div>
+            <div className="font-semibold">Total: {fmtCurr(subtotal + taxTotal)}</div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button disabled={updateInv.isPending} onClick={save}>
+            {updateInv.isPending ? <Loader2 className="size-4 animate-spin" /> : null} Save changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
