@@ -54,6 +54,7 @@ import type {
   Reservation,
   ReservationDetail,
   ReservationDocument,
+  ReservationGuest,
   Room,
   RoomStatus,
   StayQuote,
@@ -309,22 +310,82 @@ export function useUploadReservationDocument() {
       file,
       docType,
       docNumber,
+      reservationGuestId,
     }: {
       reservationId: string;
       file: File;
       docType: string;
       docNumber?: string;
+      // Which guest on the reservation this document belongs to, when the
+      // stay has more than one (see useAddReservationGuest). Omitted for the
+      // primary guest — the server attributes it to the stay itself, exactly
+      // as it always has.
+      reservationGuestId?: string;
     }) => {
       const form = new FormData();
       form.append("file", file);
       form.append("doc_type", docType);
       if (docNumber) form.append("doc_number", docNumber);
+      if (reservationGuestId) form.append("reservation_guest_id", reservationGuestId);
       return apiUpload<{ id: string; mime_type: string; size_bytes: number }>(
         `/api/reservations/${reservationId}/documents`,
         form,
       );
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["reservations"] }),
+  });
+}
+
+/** Attaches a companion guest to a reservation — a party of more than one,
+ *  each with their own name, contact details and (via
+ *  useUploadReservationDocument's reservationGuestId) their own ID and photo.
+ *  The primary guest never goes through this: it is recorded automatically
+ *  when the reservation itself is created. */
+export function useAddReservationGuest() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      reservationId,
+      fullName,
+      email,
+      phone,
+      idType,
+      idNumber,
+    }: {
+      reservationId: string;
+      fullName: string;
+      email?: string;
+      phone?: string;
+      idType?: string;
+      idNumber?: string;
+    }) =>
+      apiFetch<{ id: string; ordinal: number; full_name: string }>(
+        `/api/reservations/${reservationId}/guests`,
+        {
+          method: "POST",
+          body: {
+            full_name: fullName,
+            email: email || undefined,
+            phone: phone || undefined,
+            id_type: idType || undefined,
+            id_number: idNumber || undefined,
+          },
+        },
+      ),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: ["reservation-guests", vars.reservationId] }),
+  });
+}
+
+/** Every guest on a reservation, including the primary guest (ordinal 0)
+ *  recorded at booking. Used to label whose documents are whose in the
+ *  reservation detail view. */
+export function useReservationGuests(id: string | null) {
+  return useQuery({
+    queryKey: ["reservation-guests", id],
+    queryFn: () =>
+      apiFetch<ReservationGuest[] | null>(`/api/reservations/${id}/guests`).then((r) => r ?? []),
+    enabled: isAuthenticated() && !!id,
   });
 }
 

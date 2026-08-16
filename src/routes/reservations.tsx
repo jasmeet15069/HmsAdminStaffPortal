@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/api/auth";
 import {
   useReservations,
   useReservationDocuments,
+  useReservationGuests,
   useCheckIn,
   useCheckOut,
   useCancelReservation,
@@ -136,6 +137,10 @@ function ReservationsPage() {
   // Only fetched once a reservation is actually opened — a busy front desk's
   // list should not eagerly fetch every guest's ID/photo metadata.
   const docsQ = useReservationDocuments(isLive ? open : null);
+  // Every guest on the reservation (ordinal 0 is the one named on the booking
+  // itself; 1+ are companions added afterward), so documents can be grouped
+  // under whoever they actually belong to rather than shown as one pile.
+  const guestsQ = useReservationGuests(isLive ? open : null);
 
   const rows: Row[] = useMemo(() => {
     if (isLive) {
@@ -219,6 +224,25 @@ function ReservationsPage() {
   );
 
   const sel = open ? rows.find((r) => r.id === open) : null;
+
+  // Groups the flat document list by who it actually belongs to. Older
+  // reservations (or the rare failed guest-lookup) have no reservation_guests
+  // rows at all, in which case everything falls under the one guest named on
+  // the booking — the same single bucket this screen always showed.
+  const guestGroups = useMemo(() => {
+    const docs = docsQ.data ?? [];
+    const guestList = guestsQ.data ?? [];
+    if (guestList.length === 0) {
+      return [{ id: null as string | null, name: sel?.guestName ?? "Guest", docs }];
+    }
+    return guestList.map((g) => ({
+      id: g.id,
+      name: g.ordinal === 0 ? g.full_name : `${g.full_name} (guest ${g.ordinal + 1})`,
+      docs: docs.filter((d) =>
+        g.ordinal === 0 ? !d.reservation_guest_id || d.reservation_guest_id === g.id : d.reservation_guest_id === g.id,
+      ),
+    }));
+  }, [docsQ.data, guestsQ.data, sel?.guestName]);
 
   const doCheckIn = (id: string) => {
     if (isLive) checkInM.mutate(id, { onSuccess: () => toast.success("Guest checked in") });
@@ -410,22 +434,37 @@ function ReservationsPage() {
               {isLive && (
                 <div className="border-t pt-3 mt-1">
                   <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
-                    Guest photo &amp; ID document
+                    Guest photos &amp; ID documents
                   </div>
-                  {docsQ.isLoading && (
+                  {(docsQ.isLoading || guestsQ.isLoading) && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="size-4 animate-spin" /> Loading…
                     </div>
                   )}
-                  {!docsQ.isLoading && (docsQ.data?.length ?? 0) === 0 && (
+                  {!docsQ.isLoading && !guestsQ.isLoading && guestGroups.every((g) => g.docs.length === 0) && (
                     <div className="text-sm text-muted-foreground">
                       No photo or ID document on file for this reservation.
                     </div>
                   )}
-                  <div className="flex flex-wrap gap-4">
-                    {(docsQ.data ?? []).map((doc) => (
-                      <DocumentCard key={doc.id} reservationId={sel.id} doc={doc} />
-                    ))}
+                  <div className="space-y-4">
+                    {guestGroups.map((group) =>
+                      group.docs.length === 0 ? null : (
+                        <div key={group.id ?? "primary"}>
+                          {/* Only worth a heading once there is more than one
+                              guest with documents — a single-guest reservation
+                              (still the common case) looks exactly as it always
+                              did. */}
+                          {guestGroups.filter((g) => g.docs.length > 0).length > 1 && (
+                            <div className="text-sm font-medium mb-2">{group.name}</div>
+                          )}
+                          <div className="flex flex-wrap gap-4">
+                            {group.docs.map((doc) => (
+                              <DocumentCard key={doc.id} reservationId={sel.id} doc={doc} />
+                            ))}
+                          </div>
+                        </div>
+                      ),
+                    )}
                   </div>
                 </div>
               )}

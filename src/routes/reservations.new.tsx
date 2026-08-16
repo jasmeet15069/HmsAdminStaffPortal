@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/AppShell";
 import { useMHMS, fmtINR } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
 import {
+  useAddReservationGuest,
   useAvailableRooms,
   useCreateReservation,
   useReservationQuote,
@@ -18,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, Camera, Check, Loader2, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Camera, Check, Loader2, Plus, RotateCcw, Trash2, UserPlus } from "lucide-react";
 
 export const Route = createFileRoute("/reservations/new")({
   head: () => ({ meta: [{ title: "New Reservation · MHMS" }] }),
@@ -61,6 +62,46 @@ const PAYMENT_METHODS = [
   { value: "upi", label: "UPI" },
   { value: "credit", label: "Bill to company (credit)" },
 ];
+
+// A guest can present more than one form of ID (passport for the visa, a
+// driver's licence too), and a reservation can be more than one guest — a
+// family in one room, a group sharing a suite. Both are optional beyond the
+// one primary guest the wizard has always required.
+interface GuestIdDoc {
+  key: string;
+  file: File | null;
+  docType: string;
+  docNumber: string;
+}
+
+interface CompanionGuest {
+  key: string;
+  name: string;
+  email: string;
+  phone: string;
+  idDocs: GuestIdDoc[];
+  photoFile: File | null;
+  photoVerified: boolean;
+}
+
+function blankIdDoc(): GuestIdDoc {
+  return { key: crypto.randomUUID(), file: null, docType: "", docNumber: "" };
+}
+
+function blankCompanion(): CompanionGuest {
+  return { key: crypto.randomUUID(), name: "", email: "", phone: "", idDocs: [blankIdDoc()], photoFile: null, photoVerified: false };
+}
+
+// A guest's ID is "on file" once every row it has has both a file and a
+// chosen type — an empty list, or a row missing either, is not enough to let
+// the wizard proceed.
+function idDocsComplete(docs: GuestIdDoc[]): boolean {
+  return docs.length > 0 && docs.every((d) => !!d.file && !!d.docType);
+}
+
+function updateAt<T>(list: T[], index: number, patch: Partial<T>): T[] {
+  return list.map((item, i) => (i === index ? { ...item, ...patch } : item));
+}
 
 // Common shape both the live API rooms and the demo store rooms normalize into.
 interface RoomVM {
@@ -105,18 +146,25 @@ function NewReservation() {
   const authed = !!useAuth((s) => s.user);
   const createRes = useCreateReservation();
   const uploadDoc = useUploadReservationDocument();
-  const [idFile, setIdFile] = useState<File | null>(null);
+  const addGuestApi = useAddReservationGuest();
+  // The primary guest's ID documents — at least one is required, and more
+  // than one is allowed (a passport and a driving licence, say). See
+  // idDocsComplete for what "on file" means.
+  const [idDocs, setIdDocs] = useState<GuestIdDoc[]>([blankIdDoc()]);
   // The photo captured/uploaded at the desk and manually checked against the
-  // ID before the wizard will let the desk proceed. Both this and idFile are
+  // ID before the wizard will let the desk proceed. Both this and idDocs are
   // mandatory — see the step-1 Continue gate below.
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoVerified, setPhotoVerified] = useState(false);
+  // Anyone beyond the primary guest — optional, but a party of three ends up
+  // with three fully-documented guests on the reservation, each independently
+  // named, contacted, verified and stored. See CompanionGuest.
+  const [companions, setCompanions] = useState<CompanionGuest[]>([]);
 
   const { rooms, addGuest, addReservation } = useMHMS();
   const [step, setStep] = useState(1);
   const [g, setG] = useState({
     name: "", email: "", phone: "", nationality: "Indian", adults: 2, children: 0,
-    idType: "", idNumber: "",
   });
   const [r, setR] = useState({
     checkIn: new Date().toISOString().slice(0, 10),
@@ -147,17 +195,18 @@ function NewReservation() {
   // character and flicker the total.
   const [appliedPromo, setAppliedPromo] = useState("");
 
-  // Re-picking either image invalidates a prior verification — the desk must
-  // look at whatever is on screen now, not whatever used to be there.
+  // Re-picking any ID document or the photo invalidates a prior verification —
+  // the desk must look at whatever is on screen now, not whatever used to be
+  // there.
   useEffect(() => {
     setPhotoVerified(false);
-  }, [idFile, photoFile]);
+  }, [idDocs, photoFile]);
 
-  const idPreviewUrl = useMemo(
-    () => (idFile && idFile.type.startsWith("image/") ? URL.createObjectURL(idFile) : null),
-    [idFile],
+  const idPreviewUrls = useMemo(
+    () => idDocs.map((d) => (d.file && d.file.type.startsWith("image/") ? URL.createObjectURL(d.file) : null)),
+    [idDocs],
   );
-  useEffect(() => () => { if (idPreviewUrl) URL.revokeObjectURL(idPreviewUrl); }, [idPreviewUrl]);
+  useEffect(() => () => { idPreviewUrls.forEach((u) => u && URL.revokeObjectURL(u)); }, [idPreviewUrls]);
 
   const photoPreviewUrl = useMemo(() => (photoFile ? URL.createObjectURL(photoFile) : null), [photoFile]);
   useEffect(() => () => { if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl); }, [photoPreviewUrl]);
@@ -258,6 +307,12 @@ function NewReservation() {
           }
         : undefined;
 
+      // The primary guest's own top-level id_type/id_number, taken from the
+      // first ID document on file — this is what the reservation-create
+      // endpoint mirrors onto the CRM guest at booking time, same as before
+      // idDocs could hold more than one.
+      const primaryIdDoc = idDocs.find((d) => d.file && d.docType);
+
       createRes.mutate(
         {
           guest_name: g.name,
@@ -274,8 +329,8 @@ function NewReservation() {
           check_in_time: r.checkInTime || undefined,
           check_out_time: r.checkOutTime || undefined,
           promo_code: appliedPromo || undefined,
-          id_type: g.idType || undefined,
-          id_number: g.idNumber || undefined,
+          id_type: primaryIdDoc?.docType || undefined,
+          id_number: primaryIdDoc?.docNumber || undefined,
           payment,
         },
         {
@@ -284,46 +339,78 @@ function NewReservation() {
             // writes a customer, an invoice and a numbered voucher, and the
             // desk should be able to quote the invoice number immediately.
             const inv = res?.settlement?.invoice_number;
+            const partySuffix = companions.length > 0 ? ` (party of ${1 + companions.length})` : "";
             toast.success(
               inv
                 ? `Reservation ${res?.confirmation_no ?? ""} created and settled · invoice ${inv}`
-                : `Reservation ${res?.confirmation_no ?? ""} created for ${g.name}`,
+                : `Reservation ${res?.confirmation_no ?? ""} created for ${g.name}${partySuffix}`,
             );
 
-            // Both documents are filed against a reservation id that did not
-            // exist until a moment ago, so they upload second, in parallel. A
-            // failed upload must not discard a booking that is already taken
-            // and paid for — each is reported on its own and either can be
-            // attached from the reservation afterwards.
+            // Every document and every companion is filed against a
+            // reservation id that did not exist until a moment ago, so they
+            // are all attached second. A failure here must not discard a
+            // booking that is already taken and paid for — each piece is
+            // reported on its own and can be attached from the reservation
+            // afterwards, so failures run independently via allSettled rather
+            // than aborting the rest.
             if (res?.id) {
-              const uploads: Array<{ label: string; run: Promise<unknown> }> = [];
-              if (idFile && g.idType) {
-                uploads.push({
-                  label: "ID document",
-                  run: uploadDoc.mutateAsync({
-                    reservationId: res.id,
-                    file: idFile,
-                    docType: g.idType,
-                    docNumber: g.idNumber || undefined,
+              const reservationId = res.id;
+              const tasks: Array<{ label: string; run: () => Promise<unknown> }> = [];
+
+              idDocs.forEach((doc) => {
+                if (!doc.file || !doc.docType) return;
+                tasks.push({
+                  label: `${g.name}'s ID document`,
+                  run: () => uploadDoc.mutateAsync({
+                    reservationId, file: doc.file as File, docType: doc.docType, docNumber: doc.docNumber || undefined,
                   }),
                 });
-              }
+              });
               if (photoFile) {
-                uploads.push({
-                  label: "guest photo",
-                  run: uploadDoc.mutateAsync({
-                    reservationId: res.id,
-                    file: photoFile,
-                    docType: "guest_photo",
-                  }),
+                tasks.push({
+                  label: `${g.name}'s photo`,
+                  run: () => uploadDoc.mutateAsync({ reservationId, file: photoFile, docType: "guest_photo" }),
                 });
               }
-              const results = await Promise.allSettled(uploads.map((u) => u.run));
+
+              // Each companion has to exist on the reservation (POST .../guests)
+              // before their documents can be attributed to them, so their
+              // upload is one task that awaits the guest first — independent of
+              // every other task, including other companions.
+              companions.forEach((cg) => {
+                tasks.push({
+                  label: `${cg.name || "companion"}'s details`,
+                  run: async () => {
+                    const created = await addGuestApi.mutateAsync({
+                      reservationId,
+                      fullName: cg.name,
+                      email: cg.email || undefined,
+                      phone: cg.phone || undefined,
+                      idType: cg.idDocs.find((d) => d.file && d.docType)?.docType,
+                      idNumber: cg.idDocs.find((d) => d.file && d.docType)?.docNumber,
+                    });
+                    const reservationGuestId = created.id;
+                    await Promise.all([
+                      ...cg.idDocs
+                        .filter((d) => d.file && d.docType)
+                        .map((d) => uploadDoc.mutateAsync({
+                          reservationId, file: d.file as File, docType: d.docType,
+                          docNumber: d.docNumber || undefined, reservationGuestId,
+                        })),
+                      ...(cg.photoFile
+                        ? [uploadDoc.mutateAsync({ reservationId, file: cg.photoFile, docType: "guest_photo", reservationGuestId })]
+                        : []),
+                    ]);
+                  },
+                });
+              });
+
+              const results = await Promise.allSettled(tasks.map((t) => t.run()));
               results.forEach((result, i) => {
                 if (result.status === "rejected") {
                   const reason = result.reason as { message?: string } | undefined;
                   toast.error(
-                    `Booking saved, but the ${uploads[i].label} did not upload: ${reason?.message ?? "unknown error"}. Attach it from the reservation afterwards.`,
+                    `Booking saved, but ${tasks[i].label} did not upload: ${reason?.message ?? "unknown error"}. Attach it from the reservation afterwards.`,
                   );
                 }
               });
@@ -439,43 +526,17 @@ function NewReservation() {
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="ID proof type">
-              <Select value={g.idType} onValueChange={(v) => setG({ ...g, idType: v })}>
-                <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
-                <SelectContent>
-                  {ID_PROOF_TYPES.map((d) => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="ID number">
-              <Input value={g.idNumber} onChange={(e) => setG({ ...g, idNumber: e.target.value })} placeholder="Document number" />
-            </Field>
-            <Field label="ID document *">
-              {/* The server decides the type from the file's leading bytes, so
-                  this accept list is a convenience for the file picker and not
-                  the check that matters. Max 5 MB. */}
-              <Input
-                type="file"
-                accept="image/jpeg,image/png,application/pdf"
-                onChange={(e) => setIdFile(e.target.files?.[0] ?? null)}
-              />
-              {idFile && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  {idFile.name} · {(idFile.size / 1024).toFixed(0)} KB
-                  {idFile.size > 5 * 1024 * 1024 && (
-                    <span className="text-destructive"> — over the 5 MB limit</span>
-                  )}
-                </p>
-              )}
-            </Field>
+            <div className="col-span-2">
+              <IdDocumentsEditor docs={idDocs} onChange={setIdDocs} />
+            </div>
             <Field label="Guest photo *">
               <GuestPhotoCapture photoFile={photoFile} previewUrl={photoPreviewUrl} onChange={setPhotoFile} />
             </Field>
 
-            {idFile && photoFile && (
+            {idDocsComplete(idDocs) && photoFile && (
               <div className="col-span-2 rounded-md border p-3 space-y-3 bg-muted/30">
                 <div className="text-sm font-medium">Verify the photo against the ID before continuing</div>
-                <div className="flex items-start gap-6">
+                <div className="flex items-start gap-6 flex-wrap">
                   <div className="text-center">
                     <img
                       src={photoPreviewUrl ?? undefined}
@@ -484,16 +545,20 @@ function NewReservation() {
                     />
                     <div className="text-xs text-muted-foreground mt-1">Captured photo</div>
                   </div>
-                  <div className="text-center">
-                    {idPreviewUrl ? (
-                      <img src={idPreviewUrl} alt="Uploaded ID" className="size-28 rounded-md border object-cover" />
-                    ) : (
-                      <div className="size-28 rounded-md border grid place-items-center text-xs text-muted-foreground px-2 text-center">
-                        {idFile.name}
+                  {idDocs.map((doc, i) => (
+                    <div key={doc.key} className="text-center">
+                      {idPreviewUrls[i] ? (
+                        <img src={idPreviewUrls[i] as string} alt="Uploaded ID" className="size-28 rounded-md border object-cover" />
+                      ) : (
+                        <div className="size-28 rounded-md border grid place-items-center text-xs text-muted-foreground px-2 text-center">
+                          {doc.file?.name}
+                        </div>
+                      )}
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {ID_PROOF_TYPES.find((t) => t.value === doc.docType)?.label ?? "ID"}
                       </div>
-                    )}
-                    <div className="text-xs text-muted-foreground mt-1">Uploaded ID</div>
-                  </div>
+                    </div>
+                  ))}
                 </div>
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <input
@@ -501,10 +566,36 @@ function NewReservation() {
                     checked={photoVerified}
                     onChange={(e) => setPhotoVerified(e.target.checked)}
                   />
-                  Verified — this photo matches the person on the ID document
+                  Verified — this photo matches the person on the ID document{idDocs.length > 1 ? "s" : ""}
                 </label>
               </div>
             )}
+
+            <div className="col-span-2 border-t pt-4 mt-2">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <div className="text-sm font-medium">Additional guests</div>
+                  <div className="text-xs text-muted-foreground">
+                    Optional — {g.name || "the primary guest"} above is the only guest required. Add anyone else staying so their own photo and ID are on file too.
+                  </div>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => setCompanions((cs) => [...cs, blankCompanion()])}>
+                  <UserPlus className="size-4" /> Add guest
+                </Button>
+              </div>
+              <div className="space-y-3">
+                {companions.map((cg, i) => (
+                  <CompanionCard
+                    key={cg.key}
+                    companion={cg}
+                    index={i + 2}
+                    onChange={(patch) => setCompanions((cs) => updateAt(cs, i, patch))}
+                    onRemove={() => setCompanions((cs) => cs.filter((_, j) => j !== i))}
+                  />
+                ))}
+              </div>
+            </div>
+
             <Field label="Adults"><Input type="number" min={1} value={g.adults} onChange={(e) => setG({ ...g, adults: +e.target.value })} /></Field>
             <Field label="Children"><Input type="number" min={0} value={g.children} onChange={(e) => setG({ ...g, children: +e.target.value })} /></Field>
             <Field label="Check-in date *"><Input type="date" value={r.checkIn} onChange={(e) => {
@@ -706,6 +797,11 @@ function NewReservation() {
             </div>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <Field label="Guest"><div className="font-medium">{g.name}</div><div className="text-muted-foreground text-xs">{g.email || "no email"} · {g.phone}</div></Field>
+              {companions.length > 0 && (
+                <Field label={`Additional guest${companions.length > 1 ? "s" : ""}`}>
+                  <div>{companions.map((c) => c.name).filter(Boolean).join(", ")}</div>
+                </Field>
+              )}
               <Field label="Source"><div className="font-medium">{r.source}</div></Field>
               <Field label="Room"><div className="font-medium">{selectedRoom.number} · {selectedRoom.type}</div></Field>
               <Field label="Stay"><div>{r.checkIn} → {r.checkOut} ({nights} nights)</div></Field>
@@ -740,10 +836,19 @@ function NewReservation() {
                 // At least one contact detail: the API requires it, because
                 // without a phone or an email a returning guest can never be
                 // matched and no folio can be opened at check-in. The ID
-                // document, guest photo and the manual match check are all
+                // document(s), guest photo and the manual match check are all
                 // mandatory too — no reservation is created without a
-                // verified identity on file.
-                (step === 1 && (!g.name || (!g.phone && !g.email) || !idFile || !photoFile || !photoVerified)) ||
+                // verified identity on file. The primary guest is the only
+                // one required; any additional guest that has been *added*
+                // must be just as complete before the desk can continue —
+                // a half-filled companion card is not allowed to slip through.
+                (step === 1 && (
+                  !g.name || (!g.phone && !g.email) ||
+                  !idDocsComplete(idDocs) || !photoFile || !photoVerified ||
+                  companions.some((cg) =>
+                    !cg.name.trim() || (!cg.phone.trim() && !cg.email.trim()) ||
+                    !idDocsComplete(cg.idDocs) || !cg.photoFile || !cg.photoVerified)
+                )) ||
                 (step === 2 && (!r.roomId || !selectedRoomFits)) ||
                 (step === 3 && !paymentReady)
               }
@@ -764,6 +869,163 @@ function NewReservation() {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="space-y-1.5"><Label>{label}</Label>{children}</div>;
+}
+
+// A repeatable list of ID documents for one guest — a passport and a driving
+// licence both filed against the same person, say. At least one row with both
+// a file and a chosen type is required (idDocsComplete), but nothing stops
+// the desk from adding as many as the guest actually presents.
+function IdDocumentsEditor({
+  docs,
+  onChange,
+}: {
+  docs: GuestIdDoc[];
+  onChange: (docs: GuestIdDoc[]) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>ID documents * (at least one)</Label>
+      <div className="space-y-2">
+        {docs.map((doc, i) => (
+          <div key={doc.key} className="flex flex-wrap items-center gap-2 border rounded-md p-2">
+            <Select value={doc.docType} onValueChange={(v) => onChange(updateAt(docs, i, { docType: v }))}>
+              <SelectTrigger className="w-[170px]"><SelectValue placeholder="Document type…" /></SelectTrigger>
+              <SelectContent>
+                {ID_PROOF_TYPES.map((d) => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {/* The server decides the type from the file's leading bytes, so
+                this accept list is a convenience for the file picker and not
+                the check that matters. Max 5 MB. */}
+            <Input
+              type="file"
+              accept="image/jpeg,image/png,application/pdf"
+              className="max-w-[200px]"
+              onChange={(e) => onChange(updateAt(docs, i, { file: e.target.files?.[0] ?? null }))}
+            />
+            <Input
+              placeholder="Document number (optional)"
+              className="max-w-[170px]"
+              value={doc.docNumber}
+              onChange={(e) => onChange(updateAt(docs, i, { docNumber: e.target.value }))}
+            />
+            {doc.file && (
+              <span className="text-xs text-muted-foreground">
+                {(doc.file.size / 1024).toFixed(0)} KB
+                {doc.file.size > 5 * 1024 * 1024 && <span className="text-destructive"> — over 5 MB</span>}
+              </span>
+            )}
+            {docs.length > 1 && (
+              <Button type="button" variant="ghost" size="sm" onClick={() => onChange(docs.filter((_, j) => j !== i))}>
+                <Trash2 className="size-4" />
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+      <Button type="button" variant="outline" size="sm" onClick={() => onChange([...docs, blankIdDoc()])}>
+        <Plus className="size-4" /> Add another document
+      </Button>
+    </div>
+  );
+}
+
+// One additional guest on the reservation, beyond the primary guest above —
+// name, contact, their own ID document(s), their own photo and their own
+// verification, on exactly the same footing as the primary guest.
+function CompanionCard({
+  companion,
+  index,
+  onChange,
+  onRemove,
+}: {
+  companion: CompanionGuest;
+  index: number;
+  onChange: (patch: Partial<CompanionGuest>) => void;
+  onRemove: () => void;
+}) {
+  const previewUrl = useMemo(
+    () => (companion.photoFile ? URL.createObjectURL(companion.photoFile) : null),
+    [companion.photoFile],
+  );
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+
+  const idPreviewUrls = useMemo(
+    () => companion.idDocs.map((d) => (d.file && d.file.type.startsWith("image/") ? URL.createObjectURL(d.file) : null)),
+    [companion.idDocs],
+  );
+  useEffect(() => () => { idPreviewUrls.forEach((u) => u && URL.revokeObjectURL(u)); }, [idPreviewUrls]);
+
+  const complete = idDocsComplete(companion.idDocs) && !!companion.photoFile;
+
+  return (
+    <div className="rounded-lg border p-4 space-y-3 bg-muted/20">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">Guest {index}</div>
+        <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
+          <Trash2 className="size-4" /> Remove
+        </Button>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Full name *">
+          <Input value={companion.name} onChange={(e) => onChange({ name: e.target.value })} />
+        </Field>
+        <Field label="Phone or email *">
+          <Input value={companion.phone} onChange={(e) => onChange({ phone: e.target.value })} placeholder="+91 …" />
+        </Field>
+        <Field label="Email">
+          <Input type="email" value={companion.email} onChange={(e) => onChange({ email: e.target.value })} />
+        </Field>
+      </div>
+
+      <IdDocumentsEditor
+        docs={companion.idDocs}
+        onChange={(docs) => onChange({ idDocs: docs, photoVerified: false })}
+      />
+
+      <Field label="Photo *">
+        <GuestPhotoCapture
+          photoFile={companion.photoFile}
+          previewUrl={previewUrl}
+          onChange={(file) => onChange({ photoFile: file, photoVerified: false })}
+        />
+      </Field>
+
+      {complete && (
+        <div className="rounded-md border p-3 space-y-3 bg-background">
+          <div className="text-sm font-medium">Verify the photo against the ID</div>
+          <div className="flex items-start gap-6 flex-wrap">
+            <div className="text-center">
+              <img src={previewUrl ?? undefined} alt="Captured guest photo" className="size-24 rounded-md border object-cover" />
+              <div className="text-xs text-muted-foreground mt-1">Captured photo</div>
+            </div>
+            {companion.idDocs.map((doc, i) => (
+              <div key={doc.key} className="text-center">
+                {idPreviewUrls[i] ? (
+                  <img src={idPreviewUrls[i] as string} alt="Uploaded ID" className="size-24 rounded-md border object-cover" />
+                ) : (
+                  <div className="size-24 rounded-md border grid place-items-center text-xs text-muted-foreground px-2 text-center">
+                    {doc.file?.name}
+                  </div>
+                )}
+                <div className="text-xs text-muted-foreground mt-1">
+                  {ID_PROOF_TYPES.find((t) => t.value === doc.docType)?.label ?? "ID"}
+                </div>
+              </div>
+            ))}
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={companion.photoVerified}
+              onChange={(e) => onChange({ photoVerified: e.target.checked })}
+            />
+            Verified — this photo matches the person on the ID document{companion.idDocs.length > 1 ? "s" : ""}
+          </label>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Captures a guest photo either live from a webcam or, when no camera is

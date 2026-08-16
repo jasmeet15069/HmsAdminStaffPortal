@@ -606,9 +606,27 @@ export interface ReservationDocument {
   size_bytes: number;
   sha256: string;
   created_at: string;
+  // Which guest on the reservation this belongs to — null for the primary
+  // guest (or anything uploaded before multi-guest support existed). Matches
+  // ReservationGuest.id below.
+  reservation_guest_id?: string | null;
   // Whether the bytes are still on disk — a row can outlive its file, see
   // reservation_documents.go on the backend.
   artifact_available: boolean;
+}
+
+// A reservation is usually one guest, but not always — a family in one room,
+// a group sharing a suite. ordinal 0 is always the guest captured at
+// booking; 1+ are companions added afterward at the desk.
+export interface ReservationGuest {
+  id: string;
+  ordinal: number;
+  full_name: string;
+  email?: string | null;
+  phone?: string | null;
+  id_type?: string | null;
+  id_number?: string | null;
+  created_at: string;
 }
 
 // ---------------------------------------------------------------------------
