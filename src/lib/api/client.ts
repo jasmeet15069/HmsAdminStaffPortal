@@ -58,6 +58,42 @@ export async function apiUpload<T>(
   return json.data as T;
 }
 
+/** Downloads a reservation document (ID proof or guest photo) and saves it via
+ *  the browser's normal download flow.
+ *
+ *  A plain `<a href="...">` cannot carry the Authorization header the endpoint
+ *  requires, so this fetches the bytes as a blob (with the header attached)
+ *  and clicks a throwaway anchor pointed at an object URL — the same pattern
+ *  as any other authenticated-file-download flow. The object URL is revoked
+ *  right after, so nothing outlives the click. */
+export async function downloadReservationDocument(
+  reservationId: string,
+  docId: string,
+  suggestedFilename: string,
+): Promise<void> {
+  const headers: Record<string, string> = {};
+  const token = getAccessToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(
+    `${API_URL}/api/reservations/${reservationId}/documents/${docId}/content`,
+    { headers },
+  );
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(json.error || `download failed (${res.status})`);
+  }
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = suggestedFilename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 export function setTokens(session: Session): void {
   if (!isBrowser) return;
   window.localStorage.setItem(ACCESS_KEY, session.access_token);
