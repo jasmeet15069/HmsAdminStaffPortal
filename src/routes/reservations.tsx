@@ -2,8 +2,15 @@ import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-r
 import { PageHeader } from "@/components/AppShell";
 import { useMHMS, resStatusMeta, fmtINR, type ResStatus } from "@/lib/mhms-store";
 import { useAuth } from "@/lib/api/auth";
-import { useReservations, useCheckIn, useCheckOut, useCancelReservation } from "@/lib/api/hooks";
-import type { Reservation as ApiReservation } from "@/lib/api/types";
+import {
+  useReservations,
+  useReservationDocuments,
+  useCheckIn,
+  useCheckOut,
+  useCancelReservation,
+} from "@/lib/api/hooks";
+import { downloadReservationDocument, getAccessToken, API_URL } from "@/lib/api/client";
+import type { Reservation as ApiReservation, ReservationDocument } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -24,8 +31,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, Eye, LogIn, LogOut, Loader2, X } from "lucide-react";
-import { useState, useMemo } from "react";
+import { Plus, Search, Eye, LogIn, LogOut, Loader2, X, Download, FileText } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/reservations")({
@@ -126,6 +133,9 @@ function ReservationsPage() {
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<string>("all");
   const [open, setOpen] = useState<string | null>(null);
+  // Only fetched once a reservation is actually opened — a busy front desk's
+  // list should not eagerly fetch every guest's ID/photo metadata.
+  const docsQ = useReservationDocuments(isLive ? open : null);
 
   const rows: Row[] = useMemo(() => {
     if (isLive) {
@@ -396,6 +406,30 @@ function ReservationsPage() {
                 <Field label="Nights" value={sel.nights} />
                 <Field label="Amount" value={sel.amount ? fmtINR(sel.amount) : "—"} />
               </div>
+
+              {isLive && (
+                <div className="border-t pt-3 mt-1">
+                  <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2">
+                    Guest photo &amp; ID document
+                  </div>
+                  {docsQ.isLoading && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" /> Loading…
+                    </div>
+                  )}
+                  {!docsQ.isLoading && (docsQ.data?.length ?? 0) === 0 && (
+                    <div className="text-sm text-muted-foreground">
+                      No photo or ID document on file for this reservation.
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-4">
+                    {(docsQ.data ?? []).map((doc) => (
+                      <DocumentCard key={doc.id} reservationId={sel.id} doc={doc} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <DialogFooter className="gap-2 sm:gap-2">
                 {sel.canCheckIn && (
                   <Button onClick={() => doCheckIn(sel.id)} disabled={checkInM.isPending}>
@@ -444,6 +478,95 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
     <div>
       <div className="text-xs text-muted-foreground uppercase tracking-wide">{label}</div>
       <div className="font-medium mt-0.5">{value}</div>
+    </div>
+  );
+}
+
+const DOC_TYPE_LABEL: Record<string, string> = {
+  guest_photo: "Guest photo",
+  passport: "Passport",
+  driver_license: "Driver licence",
+  national_id: "National ID",
+  voter_id: "Voter ID",
+};
+
+// A document's bytes are never public — every read goes through the
+// authenticated /content endpoint (see reservation_documents.go), so an
+// image thumbnail can't just be an <img src="..."> to that URL. Instead this
+// fetches the bytes once (with the auth header) and renders them from a
+// local object URL, the same pattern the download button uses.
+function DocumentCard({ reservationId, doc }: { reservationId: string; doc: ReservationDocument }) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const isImage = doc.mime_type === "image/jpeg" || doc.mime_type === "image/png";
+
+  useEffect(() => {
+    if (!isImage || !doc.artifact_available) return;
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = getAccessToken();
+        const res = await fetch(
+          `${API_URL}/api/reservations/${reservationId}/documents/${doc.id}/content`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        );
+        if (!res.ok) return;
+        const blob = await res.blob();
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPreviewUrl(objectUrl);
+      } catch {
+        // Thumbnail is a nicety; the download button still works if this fails.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reservationId, doc.id, isImage, doc.artifact_available]);
+
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const ext = doc.mime_type === "application/pdf" ? "pdf" : doc.mime_type === "image/png" ? "png" : "jpg";
+      await downloadReservationDocument(
+        reservationId,
+        doc.id,
+        `${DOC_TYPE_LABEL[doc.doc_type] ?? doc.doc_type}-${doc.id.slice(0, 8)}.${ext}`,
+      );
+    } catch (e: any) {
+      toast.error(e?.message ?? "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className="w-32 space-y-1.5">
+      <div className="size-32 rounded-md border grid place-items-center overflow-hidden bg-muted/40">
+        {!doc.artifact_available ? (
+          <span className="text-[11px] text-destructive text-center px-2">File missing on server</span>
+        ) : previewUrl ? (
+          <img src={previewUrl} alt={DOC_TYPE_LABEL[doc.doc_type] ?? doc.doc_type} className="size-full object-cover" />
+        ) : isImage ? (
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        ) : (
+          <FileText className="size-8 text-muted-foreground" />
+        )}
+      </div>
+      <div className="text-xs font-medium truncate">{DOC_TYPE_LABEL[doc.doc_type] ?? doc.doc_type}</div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full h-7 text-xs"
+        disabled={!doc.artifact_available || downloading}
+        onClick={() => void download()}
+      >
+        {downloading ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
+        Download
+      </Button>
     </div>
   );
 }

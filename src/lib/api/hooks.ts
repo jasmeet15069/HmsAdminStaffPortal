@@ -53,6 +53,7 @@ import type {
   RatePlan,
   Reservation,
   ReservationDetail,
+  ReservationDocument,
   Room,
   RoomStatus,
   StayQuote,
@@ -764,6 +765,21 @@ export function useReservationDetail(id: string | null) {
   return useQuery({
     queryKey: ["reservations", "detail", id] as const,
     queryFn: () => apiFetch<ReservationDetail>(`/api/reservations/${id}`),
+    enabled: isAuthenticated() && !!id,
+  });
+}
+
+/** The ID document(s) and guest photo filed against a reservation — metadata
+ *  only, never the bytes (those come from downloadReservationDocument, on
+ *  demand, since a hotel with a long in-house list should not eagerly fetch
+ *  every guest's passport scan). */
+export function useReservationDocuments(id: string | null) {
+  return useQuery({
+    queryKey: ["reservations", "documents", id] as const,
+    queryFn: () =>
+      apiFetch<ReservationDocument[] | null>(`/api/reservations/${id}/documents`).then(
+        (d) => d ?? [],
+      ),
     enabled: isAuthenticated() && !!id,
   });
 }

@@ -595,6 +595,23 @@ export interface GuestDetail {
 }
 
 // ---------------------------------------------------------------------------
+// Reservation documents (ID proofs + the guest photo captured at the desk)
+// ---------------------------------------------------------------------------
+
+export interface ReservationDocument {
+  id: string;
+  doc_type: "passport" | "driver_license" | "national_id" | "voter_id" | "guest_photo" | string;
+  doc_number?: string | null;
+  mime_type: string;
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+  // Whether the bytes are still on disk — a row can outlive its file, see
+  // reservation_documents.go on the backend.
+  artifact_available: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Reservation detail (GET /api/reservations/:id — same shape as list item)
 // ---------------------------------------------------------------------------
 

@@ -16,9 +16,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Camera, Check, Loader2, RotateCcw } from "lucide-react";
 
 export const Route = createFileRoute("/reservations/new")({
   head: () => ({ meta: [{ title: "New Reservation · MHMS" }] }),
@@ -106,6 +106,11 @@ function NewReservation() {
   const createRes = useCreateReservation();
   const uploadDoc = useUploadReservationDocument();
   const [idFile, setIdFile] = useState<File | null>(null);
+  // The photo captured/uploaded at the desk and manually checked against the
+  // ID before the wizard will let the desk proceed. Both this and idFile are
+  // mandatory — see the step-1 Continue gate below.
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoVerified, setPhotoVerified] = useState(false);
 
   const { rooms, addGuest, addReservation } = useMHMS();
   const [step, setStep] = useState(1);
@@ -141,6 +146,21 @@ function NewReservation() {
   // currently being typed. Quoting on every keystroke would fire a request per
   // character and flicker the total.
   const [appliedPromo, setAppliedPromo] = useState("");
+
+  // Re-picking either image invalidates a prior verification — the desk must
+  // look at whatever is on screen now, not whatever used to be there.
+  useEffect(() => {
+    setPhotoVerified(false);
+  }, [idFile, photoFile]);
+
+  const idPreviewUrl = useMemo(
+    () => (idFile && idFile.type.startsWith("image/") ? URL.createObjectURL(idFile) : null),
+    [idFile],
+  );
+  useEffect(() => () => { if (idPreviewUrl) URL.revokeObjectURL(idPreviewUrl); }, [idPreviewUrl]);
+
+  const photoPreviewUrl = useMemo(() => (photoFile ? URL.createObjectURL(photoFile) : null), [photoFile]);
+  useEffect(() => () => { if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl); }, [photoPreviewUrl]);
 
   // Ask which rooms are free for the chosen dates, rather than which are free
   // right now. The old filter (status === "available") made the wizard
@@ -270,22 +290,43 @@ function NewReservation() {
                 : `Reservation ${res?.confirmation_no ?? ""} created for ${g.name}`,
             );
 
-            // The document is filed against a reservation id that did not exist
-            // until a moment ago, so it uploads second. A failed upload must not
-            // discard a booking that is already taken and paid for — it is
-            // reported on its own and the ID can be attached from the
-            // reservation afterwards.
-            if (idFile && res?.id && g.idType) {
-              try {
-                await uploadDoc.mutateAsync({
-                  reservationId: res.id,
-                  file: idFile,
-                  docType: g.idType,
-                  docNumber: g.idNumber || undefined,
+            // Both documents are filed against a reservation id that did not
+            // exist until a moment ago, so they upload second, in parallel. A
+            // failed upload must not discard a booking that is already taken
+            // and paid for — each is reported on its own and either can be
+            // attached from the reservation afterwards.
+            if (res?.id) {
+              const uploads: Array<{ label: string; run: Promise<unknown> }> = [];
+              if (idFile && g.idType) {
+                uploads.push({
+                  label: "ID document",
+                  run: uploadDoc.mutateAsync({
+                    reservationId: res.id,
+                    file: idFile,
+                    docType: g.idType,
+                    docNumber: g.idNumber || undefined,
+                  }),
                 });
-              } catch (e: any) {
-                toast.error(`Booking saved, but the ID document did not upload: ${e?.message ?? "unknown error"}`);
               }
+              if (photoFile) {
+                uploads.push({
+                  label: "guest photo",
+                  run: uploadDoc.mutateAsync({
+                    reservationId: res.id,
+                    file: photoFile,
+                    docType: "guest_photo",
+                  }),
+                });
+              }
+              const results = await Promise.allSettled(uploads.map((u) => u.run));
+              results.forEach((result, i) => {
+                if (result.status === "rejected") {
+                  const reason = result.reason as { message?: string } | undefined;
+                  toast.error(
+                    `Booking saved, but the ${uploads[i].label} did not upload: ${reason?.message ?? "unknown error"}. Attach it from the reservation afterwards.`,
+                  );
+                }
+              });
             }
             nav({ to: "/reservations" });
           },
@@ -409,7 +450,7 @@ function NewReservation() {
             <Field label="ID number">
               <Input value={g.idNumber} onChange={(e) => setG({ ...g, idNumber: e.target.value })} placeholder="Document number" />
             </Field>
-            <Field label="ID document">
+            <Field label="ID document *">
               {/* The server decides the type from the file's leading bytes, so
                   this accept list is a convenience for the file picker and not
                   the check that matters. Max 5 MB. */}
@@ -427,7 +468,43 @@ function NewReservation() {
                 </p>
               )}
             </Field>
-            <div />
+            <Field label="Guest photo *">
+              <GuestPhotoCapture photoFile={photoFile} previewUrl={photoPreviewUrl} onChange={setPhotoFile} />
+            </Field>
+
+            {idFile && photoFile && (
+              <div className="col-span-2 rounded-md border p-3 space-y-3 bg-muted/30">
+                <div className="text-sm font-medium">Verify the photo against the ID before continuing</div>
+                <div className="flex items-start gap-6">
+                  <div className="text-center">
+                    <img
+                      src={photoPreviewUrl ?? undefined}
+                      alt="Captured guest photo"
+                      className="size-28 rounded-md border object-cover"
+                    />
+                    <div className="text-xs text-muted-foreground mt-1">Captured photo</div>
+                  </div>
+                  <div className="text-center">
+                    {idPreviewUrl ? (
+                      <img src={idPreviewUrl} alt="Uploaded ID" className="size-28 rounded-md border object-cover" />
+                    ) : (
+                      <div className="size-28 rounded-md border grid place-items-center text-xs text-muted-foreground px-2 text-center">
+                        {idFile.name}
+                      </div>
+                    )}
+                    <div className="text-xs text-muted-foreground mt-1">Uploaded ID</div>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={photoVerified}
+                    onChange={(e) => setPhotoVerified(e.target.checked)}
+                  />
+                  Verified — this photo matches the person on the ID document
+                </label>
+              </div>
+            )}
             <Field label="Adults"><Input type="number" min={1} value={g.adults} onChange={(e) => setG({ ...g, adults: +e.target.value })} /></Field>
             <Field label="Children"><Input type="number" min={0} value={g.children} onChange={(e) => setG({ ...g, children: +e.target.value })} /></Field>
             <Field label="Check-in date *"><Input type="date" value={r.checkIn} onChange={(e) => {
@@ -662,8 +739,11 @@ function NewReservation() {
               disabled={
                 // At least one contact detail: the API requires it, because
                 // without a phone or an email a returning guest can never be
-                // matched and no folio can be opened at check-in.
-                (step === 1 && (!g.name || (!g.phone && !g.email))) ||
+                // matched and no folio can be opened at check-in. The ID
+                // document, guest photo and the manual match check are all
+                // mandatory too — no reservation is created without a
+                // verified identity on file.
+                (step === 1 && (!g.name || (!g.phone && !g.email) || !idFile || !photoFile || !photoVerified)) ||
                 (step === 2 && (!r.roomId || !selectedRoomFits)) ||
                 (step === 3 && !paymentReady)
               }
@@ -684,6 +764,128 @@ function NewReservation() {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="space-y-1.5"><Label>{label}</Label>{children}</div>;
+}
+
+// Captures a guest photo either live from a webcam or, when no camera is
+// available at the desk (or the browser denies permission), from a plain
+// file picker — same accepted formats and the same File shape either way, so
+// the rest of the wizard (preview, upload) does not need to know which path
+// was used.
+function GuestPhotoCapture({
+  photoFile,
+  previewUrl,
+  onChange,
+}: {
+  photoFile: File | null;
+  previewUrl: string | null;
+  onChange: (file: File | null) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    setCameraOn(false);
+  };
+  // Release the camera on unmount too — leaving it held after navigating away
+  // keeps the browser's recording indicator on and the device unavailable to
+  // anything else at the desk.
+  useEffect(() => () => stopCamera(), []);
+
+  const startCamera = async () => {
+    setCameraError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user" },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraOn(true);
+      // The <video> element only exists once cameraOn renders it, so the
+      // stream is attached on the next tick rather than right here.
+      requestAnimationFrame(() => {
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      });
+    } catch {
+      setCameraError("Camera unavailable or permission denied — use \"Upload photo\" instead.");
+    }
+  };
+
+  const capture = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      (blob) => {
+        if (blob) onChange(new File([blob], `guest-photo-${Date.now()}.jpg`, { type: "image/jpeg" }));
+        stopCamera();
+      },
+      "image/jpeg",
+      0.9,
+    );
+  };
+
+  if (photoFile && previewUrl) {
+    return (
+      <div className="flex items-center gap-3">
+        <img src={previewUrl} alt="Guest" className="size-16 rounded-md border object-cover" />
+        <div className="text-xs text-muted-foreground">
+          {photoFile.name} · {(photoFile.size / 1024).toFixed(0)} KB
+        </div>
+        <Button type="button" variant="ghost" size="sm" onClick={() => onChange(null)}>
+          <RotateCcw className="size-4" /> Retake
+        </Button>
+      </div>
+    );
+  }
+
+  if (cameraOn) {
+    return (
+      <div className="space-y-2">
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className="rounded-md border w-full max-w-[220px] aspect-[4/3] object-cover bg-black"
+        />
+        <div className="flex gap-2">
+          <Button type="button" size="sm" onClick={capture}>
+            <Camera className="size-4" /> Capture
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={stopCamera}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => void startCamera()}>
+          <Camera className="size-4" /> Use camera
+        </Button>
+        <span className="text-xs text-muted-foreground">or</span>
+        <Input
+          type="file"
+          accept="image/jpeg,image/png"
+          className="max-w-[200px]"
+          onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+        />
+      </div>
+      {cameraError && <p className="text-xs text-destructive">{cameraError}</p>}
+    </div>
+  );
 }
 function Row({ k, v }: { k: React.ReactNode; v: React.ReactNode }) {
   return <div className="flex items-center justify-between"><div>{k}</div><div className="font-medium">{v}</div></div>;
